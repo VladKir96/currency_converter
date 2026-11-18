@@ -2,11 +2,9 @@ package com.pocketfx.domain
 
 import java.math.BigDecimal
 import java.math.MathContext
-import java.math.RoundingMode
 import java.time.Duration
 
 val RateTtl: Duration = Duration.ofMinutes(10)
-val HistoryRetention: Duration = Duration.ofDays(365)
 
 data class RateSnapshot(
     val provider: String,
@@ -61,30 +59,3 @@ fun convert(
 
 fun isCacheFresh(lastCheckedAt: Long?, now: Long): Boolean =
     lastCheckedAt != null && lastCheckedAt <= now && now - lastCheckedAt < RateTtl.toMillis()
-
-data class HistoryPoint(val timestamp: Long, val rate: BigDecimal)
-
-data class HistoryStats(
-    val latest: BigDecimal,
-    val minimum: BigDecimal,
-    val maximum: BigDecimal,
-    val changePercent: BigDecimal,
-)
-
-fun historicalRates(snapshots: List<RateSnapshot>, source: String, target: String): List<HistoryPoint> =
-    snapshots.mapNotNull { snapshot ->
-        convert(BigDecimal.ONE, source, target, snapshot.rates)?.let {
-            HistoryPoint(snapshot.providerUpdatedAt, it)
-        }
-    }.sortedBy(HistoryPoint::timestamp)
-
-fun historyStats(points: List<HistoryPoint>): HistoryStats? {
-    val first = points.firstOrNull()?.rate ?: return null
-    val latest = points.last().rate
-    return HistoryStats(
-        latest = latest,
-        minimum = points.minOf(HistoryPoint::rate),
-        maximum = points.maxOf(HistoryPoint::rate),
-        changePercent = (latest - first).movePointRight(2).divide(first, 12, RoundingMode.HALF_EVEN),
-    )
-}

@@ -10,6 +10,7 @@ import com.pocketfx.data.preferences.UserPreferencesStore
 import com.pocketfx.domain.AppLanguage
 import com.pocketfx.domain.ThemeMode
 import com.pocketfx.domain.UserPreferences
+import com.pocketfx.domain.withSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,7 +42,9 @@ class PreferencesTest {
         try {
             val first = UserPreferencesStore(store(file, writer))
             assertEquals(UserPreferences(), first.values.first())
-            first.update { expected }
+            first.update { expected.copy(sourceCurrency = "USD", targets = listOf("EUR", "RSD", "RUB")) }
+            first.update { it.withSource("RUB") }
+            assertEquals(expected, first.values.first())
             writer.cancelAndJoin()
             assertEquals(expected, UserPreferencesStore(store(file, reader)).values.first())
         } finally {

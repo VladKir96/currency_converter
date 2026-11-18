@@ -6,7 +6,6 @@ import com.pocketfx.data.remote.ExchangeRatesApi
 import com.pocketfx.data.remote.InvalidRatesException
 import com.pocketfx.data.remote.toPublishedRates
 import com.pocketfx.domain.CachedRates
-import com.pocketfx.domain.RateSnapshot
 import com.pocketfx.domain.isCacheFresh
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -35,7 +34,6 @@ internal data class RefreshStatus(
 internal interface ExchangeRateRepository {
     val latest: Flow<CachedRates?>
     val status: StateFlow<RefreshStatus>
-    fun history(since: Long): Flow<List<RateSnapshot>>
     suspend fun refresh(force: Boolean = false)
 }
 
@@ -50,7 +48,6 @@ internal class OpenExchangeRateRepository(
 
     override val latest = store.latest
     override val status: StateFlow<RefreshStatus> = refreshState
-    override fun history(since: Long) = store.history(since)
 
     override suspend fun refresh(force: Boolean) {
         if (!lock.tryLock()) return
@@ -102,7 +99,7 @@ internal class OpenExchangeRateRepository(
         }
         is UnknownHostException, is ConnectException -> RateProblem.OFFLINE
         is InterruptedIOException -> RateProblem.TIMEOUT
-            is IOException -> RateProblem.NETWORK
+        is IOException -> RateProblem.NETWORK
         else -> RateProblem.RESPONSE
     }
 

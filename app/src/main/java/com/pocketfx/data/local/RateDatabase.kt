@@ -11,6 +11,8 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.Upsert
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Entity(
@@ -51,12 +53,6 @@ internal interface RateDao {
     """)
     fun observeLatest(provider: String, base: String): Flow<LatestRatesRow?>
 
-    @Query("""
-        SELECT * FROM rate_snapshots WHERE provider = :provider AND baseCurrency = :base
-        AND providerUpdatedAt >= :since ORDER BY providerUpdatedAt
-    """)
-    fun observeHistory(provider: String, base: String, since: Long): Flow<List<RateSnapshotEntity>>
-
     @Query("SELECT * FROM rate_checks WHERE provider = :provider AND baseCurrency = :base")
     suspend fun getCheck(provider: String, base: String): RateCheckEntity?
 
@@ -74,12 +70,54 @@ internal interface RateDao {
 
     @Query("""
         DELETE FROM rate_snapshots WHERE provider = :provider AND baseCurrency = :base
-        AND providerUpdatedAt < :cutoff AND providerUpdatedAt < :latestPublication
+        AND providerUpdatedAt < :latestPublication
     """)
-    suspend fun prune(provider: String, base: String, cutoff: Long, latestPublication: Long)
+    suspend fun discardOlderRates(provider: String, base: String, latestPublication: Long)
 }
 
-@Database(entities = [RateSnapshotEntity::class, RateCheckEntity::class], version = 1)
+@Database(
+    entities = [RateSnapshotEntity::class, RateCheckEntity::class, HistoryCacheEntity::class, HistoryCatalogEntity::class],
+    version = 2,
+)
 internal abstract class RateDatabase : RoomDatabase() {
     abstract fun rates(): RateDao
+    abstract fun history(): HistoryDao
+}
+
+internal val MigrateRates1To2 = object : Migration(1, 2) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS history_series (
+                provider TEXT NOT NULL,
+                sourceCurrency TEXT NOT NULL,
+                targetCurrency TEXT NOT NULL,
+                fromDay INTEGER NOT NULL,
+                toDay INTEGER NOT NULL,
+                fetchedAt INTEGER NOT NULL,
+                pointsJson TEXT NOT NULL,
+                PRIMARY KEY (provider, sourceCurrency, targetCurrency, fromDay, toDay)
+            )
+        """)
+        db.execSQL("""
+            CREATE TABLE IF NOT EXISTS history_catalog (
+                provider TEXT NOT NULL PRIMARY KEY,
+                fetchedAt INTEGER NOT NULL,
+                codesJson TEXT NOT NULL
+            )
+        """)
+        // Keep each provider's latest conversion dataset and its existing successful-check metadata.
+        db.execSQL("""
+            DELETE FROM rate_snapshots
+            WHERE id NOT IN (
+                SELECT newest.id
+                FROM rate_snapshots AS newest
+                INNER JOIN (
+                    SELECT provider, baseCurrency, MAX(providerUpdatedAt) AS publication
+                    FROM rate_snapshots GROUP BY provider, baseCurrency
+                ) AS latest
+                ON newest.provider = latest.provider AND newest.baseCurrency = latest.baseCurrency
+                AND newest.providerUpdatedAt = latest.publication
+            )
+        """)
+    }
 }

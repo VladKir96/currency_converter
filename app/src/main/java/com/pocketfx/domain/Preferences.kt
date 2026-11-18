@@ -19,3 +19,14 @@ data class UserPreferences(
     val theme: ThemeMode = ThemeMode.SYSTEM,
     val language: AppLanguage = AppLanguage.ENGLISH,
 )
+
+internal fun UserPreferences.withSource(code: String): UserPreferences {
+    if (code == sourceCurrency || !isCurrencyCode(code)) return this
+    val existingTargets = targets.filterNot { it == sourceCurrency }.distinct()
+    val updated = if (code in existingTargets) {
+        existingTargets.map { if (it == code) sourceCurrency else it }
+    } else {
+        existingTargets + sourceCurrency
+    }
+    return copy(sourceCurrency = code, targets = updated)
+}

@@ -28,13 +28,7 @@ internal interface ExchangeRatesApi {
 
 internal fun exchangeRatesApi(
     endpoint: HttpUrl = "https://open.er-api.com/".toHttpUrl(),
-    client: OkHttpClient = OkHttpClient.Builder()
-        .followRedirects(false)
-        .callTimeout(Duration.ofSeconds(20))
-        .connectTimeout(Duration.ofSeconds(8))
-        .readTimeout(Duration.ofSeconds(12))
-        .retryOnConnectionFailure(false)
-        .build(),
+    client: OkHttpClient = rateHttpClient(),
 ): ExchangeRatesApi {
     require(endpoint.isHttps)
     return Retrofit.Builder()
@@ -44,6 +38,14 @@ internal fun exchangeRatesApi(
         .create(ExchangeRatesApi::class.java)
 }
 
+internal fun rateHttpClient(): OkHttpClient = OkHttpClient.Builder()
+    .followRedirects(false)
+    .callTimeout(Duration.ofSeconds(20))
+    .connectTimeout(Duration.ofSeconds(8))
+    .readTimeout(Duration.ofSeconds(12))
+    .retryOnConnectionFailure(false)
+    .build()
+
 internal class InvalidRatesException : Exception()
 
 internal data class PublishedRates(
@@ -51,7 +53,7 @@ internal data class PublishedRates(
     val nextProviderUpdate: Long?,
 )
 
-private fun JsonObject.string(name: String): String? =
+internal fun JsonObject.string(name: String): String? =
     get(name)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isString }?.asString
 
 private fun JsonObject.time(name: String): Long? =

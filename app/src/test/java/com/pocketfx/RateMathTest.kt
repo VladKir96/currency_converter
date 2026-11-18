@@ -1,9 +1,7 @@
 package com.pocketfx
 
 import com.pocketfx.domain.HistoryPoint
-import com.pocketfx.domain.RateSnapshot
 import com.pocketfx.domain.convert
-import com.pocketfx.domain.historicalRates
 import com.pocketfx.domain.historyStats
 import com.pocketfx.domain.isCacheFresh
 import com.pocketfx.domain.normalizeAmount
@@ -16,6 +14,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.math.BigDecimal
+import java.time.LocalDate
 import java.util.Locale
 
 class RateMathTest {
@@ -57,21 +56,9 @@ class RateMathTest {
         assertNull(convert(BigDecimal.ONE, "USD", "EUR", rates + ("EUR" to BigDecimal.ONE.negate())))
     }
 
-    @Test fun historyUsesPublishedTimesAndSkipsMissingObservations() {
-        val snapshots = listOf(
-            RateSnapshot("test", "USD", 90, 999, rates),
-            RateSnapshot("test", "USD", 30, 900, rates - "EUR"),
-            RateSnapshot("test", "USD", 10, 800, rates + ("EUR" to BigDecimal("0.5"))),
-        )
-        assertEquals(
-            listOf(HistoryPoint(10, BigDecimal("2")), HistoryPoint(90, BigDecimal("1.25"))),
-            historicalRates(snapshots, "EUR", "USD"),
-        )
-    }
-
     @Test fun computesHistoryExtremesAndChange() {
         val values = listOf("4", "3", "7", "5").mapIndexed { index, value ->
-            HistoryPoint(index.toLong(), value.toBigDecimal())
+            HistoryPoint(LocalDate.of(2026, 11, 9).plusDays(index.toLong()), value.toBigDecimal())
         }
         val stats = requireNotNull(historyStats(values))
         assertEquals(BigDecimal("5"), stats.latest)
@@ -80,6 +67,7 @@ class RateMathTest {
         assertEquals(0, stats.changePercent.compareTo(BigDecimal("25")))
         assertEquals(0, requireNotNull(historyStats(values.reversed())).changePercent.compareTo(BigDecimal("-20")))
         assertNull(historyStats(emptyList()))
+        assertNull(historyStats(values.take(1)))
     }
 
     @Test fun cacheExpiresAtExactlyTenMinutes() {

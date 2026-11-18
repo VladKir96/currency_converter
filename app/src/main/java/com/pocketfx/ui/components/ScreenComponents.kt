@@ -203,14 +203,18 @@ private fun StatusTimestamp(@StringRes label: Int, value: String?) {
 private const val AttributionUrl = "https://www.exchangerate-api.com"
 
 @Composable
-internal fun RateAttribution(modifier: Modifier = Modifier) {
+internal fun RateAttribution(
+    modifier: Modifier = Modifier,
+    url: String = AttributionUrl,
+    @StringRes labelRes: Int = R.string.attribution,
+) {
     val handler = LocalUriHandler.current
-    val label = stringResource(R.string.attribution)
-    val unavailable = stringResource(R.string.error_network)
+    val label = stringResource(labelRes)
+    val unavailable = stringResource(R.string.link_unavailable)
     val context = LocalContext.current
     TextButton(
         onClick = {
-            runCatching { handler.openUri(AttributionUrl) }.onFailure {
+            runCatching { handler.openUri(url) }.onFailure {
                 android.widget.Toast.makeText(context, unavailable, android.widget.Toast.LENGTH_SHORT).show()
             }
         },

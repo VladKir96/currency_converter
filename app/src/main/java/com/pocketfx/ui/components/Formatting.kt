@@ -6,6 +6,7 @@ import java.math.RoundingMode
 import java.text.DecimalFormat
 import java.text.NumberFormat
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
@@ -46,11 +47,10 @@ internal fun formatTimestamp(timestamp: Long, locale: Locale): String =
         .withZone(ZoneId.systemDefault())
         .format(Instant.ofEpochMilli(timestamp))
 
-internal fun formatDay(timestamp: Long, locale: Locale, includeYear: Boolean = false): String =
+internal fun formatDay(date: LocalDate, locale: Locale, includeYear: Boolean = false): String =
     DateTimeFormatter.ofLocalizedDate(if (includeYear) FormatStyle.MEDIUM else FormatStyle.SHORT)
         .withLocale(locale)
-        .withZone(ZoneId.systemDefault())
-        .format(Instant.ofEpochMilli(timestamp))
+        .format(date)
 
 internal data class CurrencyInfo(val code: String, val name: String, val symbol: String)
 

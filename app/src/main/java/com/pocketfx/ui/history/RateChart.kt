@@ -3,10 +3,12 @@ package com.pocketfx.ui.history
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -52,14 +54,14 @@ internal fun RateChart(points: List<HistoryPoint>, stats: HistoryStats) {
     val locale = LocalAppLocale.current
     val palette = MaterialTheme.colorScheme
     val description = stringResource(R.string.chart_description)
-    val first = points.first().timestamp
-    val last = points.last().timestamp
+    val first = points.first().date
+    val last = points.last().date
     var selected by remember(points) { mutableIntStateOf(points.lastIndex) }
     val normalized = remember(points, stats) {
-        val span = BigDecimal.valueOf(last - first)
+        val span = BigDecimal.valueOf(last.toEpochDay() - first.toEpochDay())
         val range = stats.maximum - stats.minimum
         points.map { point ->
-            val x = BigDecimal.valueOf(point.timestamp - first).divide(span, MathContext.DECIMAL64).toFloat()
+            val x = BigDecimal.valueOf(point.date.toEpochDay() - first.toEpochDay()).divide(span, MathContext.DECIMAL64).toFloat()
             val y = if (range.signum() == 0) 0.5f else {
                 (stats.maximum - point.rate).divide(range, MathContext.DECIMAL64).toFloat()
             }
@@ -67,41 +69,54 @@ internal fun RateChart(points: List<HistoryPoint>, stats: HistoryStats) {
         }
     }
 
-    Canvas(
-        Modifier.fillMaxWidth().height(160.dp)
-            .semantics { contentDescription = description }
-            .pointerInput(normalized) {
-                detectTapGestures { touch ->
-                    val padding = 8.dp.toPx()
-                    val width = (size.width - 2 * padding).coerceAtLeast(1f)
-                    val position = (touch.x - padding) / width
-                    selected = normalized.indices.minBy { abs(normalized[it].x - position) }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        val flat = stats.maximum.compareTo(stats.minimum) == 0
+        Column(
+            Modifier.height(160.dp).widthIn(max = 96.dp),
+            verticalArrangement = if (flat) Arrangement.Center else Arrangement.SpaceBetween,
+            horizontalAlignment = Alignment.End,
+        ) {
+            MutedText(stats.maximum.asRate(locale))
+            if (!flat) MutedText(stats.minimum.asRate(locale))
+        }
+        Column(Modifier.weight(1f)) {
+            Canvas(
+                Modifier.fillMaxWidth().height(160.dp)
+                    .semantics { contentDescription = description }
+                    .pointerInput(normalized) {
+                        detectTapGestures { touch ->
+                            val padding = 8.dp.toPx()
+                            val width = (size.width - 2 * padding).coerceAtLeast(1f)
+                            val position = (touch.x - padding) / width
+                            selected = normalized.indices.minBy { abs(normalized[it].x - position) }
+                        }
+                    },
+            ) {
+                val padding = 8.dp.toPx()
+                val width = (size.width - 2 * padding).coerceAtLeast(1f)
+                val height = (size.height - 2 * padding).coerceAtLeast(1f)
+                val plot = normalized.map { Offset(padding + it.x * width, padding + it.y * height) }
+                for (line in 0..4) {
+                    val y = padding + line * height / 4
+                    drawLine(palette.outlineVariant, Offset(padding, y), Offset(padding + width, y), 1.dp.toPx())
                 }
-            },
-    ) {
-        val padding = 8.dp.toPx()
-        val width = (size.width - 2 * padding).coerceAtLeast(1f)
-        val height = (size.height - 2 * padding).coerceAtLeast(1f)
-        val plot = normalized.map { Offset(padding + it.x * width, padding + it.y * height) }
-        for (line in 0..4) {
-            val y = padding + line * height / 4
-            drawLine(palette.outlineVariant, Offset(padding, y), Offset(padding + width, y), 1.dp.toPx())
-        }
-        val line = Path().apply {
-            moveTo(plot.first().x, plot.first().y)
-            plot.drop(1).forEach { lineTo(it.x, it.y) }
-        }
-        drawPath(line, palette.primary, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
-        plot.forEach { drawCircle(palette.primary, 2.dp.toPx(), it) }
-        val focus = plot[selected]
-        drawLine(palette.primary.copy(alpha = 0.45f), Offset(focus.x, padding), Offset(focus.x, padding + height), 1.dp.toPx())
-        drawCircle(palette.surface, 6.dp.toPx(), focus)
-        drawCircle(palette.primary, 4.dp.toPx(), focus)
-    }
+                val line = Path().apply {
+                    moveTo(plot.first().x, plot.first().y)
+                    plot.drop(1).forEach { lineTo(it.x, it.y) }
+                }
+                drawPath(line, palette.primary, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
+                plot.forEach { drawCircle(palette.primary, 2.dp.toPx(), it) }
+                val focus = plot[selected]
+                drawLine(palette.primary.copy(alpha = 0.45f), Offset(focus.x, padding), Offset(focus.x, padding + height), 1.dp.toPx())
+                drawCircle(palette.surface, 6.dp.toPx(), focus)
+                drawCircle(palette.primary, 4.dp.toPx(), focus)
+            }
 
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        MutedText(formatDay(first, locale))
-        MutedText(formatDay(last, locale))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                MutedText(formatDay(first, locale))
+                MutedText(formatDay(last, locale))
+            }
+        }
     }
     Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = { selected-- }, enabled = selected > 0) {
@@ -109,7 +124,7 @@ internal fun RateChart(points: List<HistoryPoint>, stats: HistoryStats) {
         }
         val point = points[selected]
         Text(
-            stringResource(R.string.observation, formatDay(point.timestamp, locale, includeYear = true), point.rate.asRate(locale)),
+            stringResource(R.string.observation, formatDay(point.date, locale, includeYear = true), point.rate.asRate(locale)),
             Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite },
             textAlign = TextAlign.Center,
             style = MaterialTheme.typography.labelLarge,

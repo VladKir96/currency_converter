@@ -4,15 +4,17 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pocketfx.data.preferences.UserPreferencesStore
 import com.pocketfx.data.repository.ExchangeRateRepository
+import com.pocketfx.data.repository.HistoricalRatesRepository
 import com.pocketfx.domain.AppLanguage
 import com.pocketfx.domain.CachedRates
-import com.pocketfx.domain.HistoryRetention
-import com.pocketfx.domain.RateSnapshot
+import com.pocketfx.domain.HistoryQuery
 import com.pocketfx.domain.ThemeMode
 import com.pocketfx.domain.UserPreferences
 import com.pocketfx.domain.isCurrencyCode
 import com.pocketfx.domain.normalizeAmount
+import com.pocketfx.domain.withSource
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -20,7 +22,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.Clock
@@ -31,15 +36,10 @@ internal data class RateCacheState(
     val failed: Boolean = false,
 )
 
-internal data class HistoryCacheState(
-    val snapshots: List<RateSnapshot> = emptyList(),
-    val loaded: Boolean = false,
-    val failed: Boolean = false,
-)
-
 internal class PocketFxViewModel(
     private val preferenceStore: UserPreferencesStore,
     private val rates: ExchangeRateRepository,
+    private val historicalRates: HistoricalRatesRepository,
     connected: Flow<Boolean>,
     private val clock: Clock,
 ) : ViewModel() {
@@ -61,19 +61,12 @@ internal class PocketFxViewModel(
             delay(30_000)
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), clock.millis())
-    val history = flow {
-        var current = HistoryCacheState()
-        observeWithRetry(
-            observe = { rates.history(clock.millis() - HistoryRetention.toMillis()) },
-            onError = {
-                current = current.copy(loaded = true, failed = true)
-                emit(current)
-            },
-        ) {
-            current = HistoryCacheState(it, loaded = true)
-            emit(current)
-        }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HistoryCacheState())
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun history(query: HistoryQuery, refreshes: Flow<Unit>) = refreshes.map { true }
+        .onStart { emit(false) }
+        .flatMapLatest { force -> historicalRates.load(query, force) }
+
+    fun historyCurrencies() = historicalRates.currencies()
 
     init {
         viewModelScope.launch {
@@ -116,8 +109,7 @@ internal class PocketFxViewModel(
     }
 
     fun setSource(code: String) {
-        if (!isCurrencyCode(code)) return
-        edit { prefs -> prefs.copy(sourceCurrency = code, targets = prefs.targets - code) }
+        edit { it.withSource(code) }
     }
 
     fun toggleTarget(code: String) {

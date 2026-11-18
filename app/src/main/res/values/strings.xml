@@ -57,8 +57,6 @@
         <item quantity="one">%1$d day</item>
         <item quantity="other">%1$d days</item>
     </plurals>
-    <string name="history_empty">History will build up over time</string>
-    <string name="history_empty_detail">Charts appear after Pocket FX saves at least two published rates for this pair within the selected period.</string>
     <string name="history_latest">Latest</string>
     <string name="history_min">Low</string>
     <string name="history_max">High</string>
@@ -80,4 +78,17 @@
     <string name="version">Version %1$s</string>
     <string name="attribution">Rates By Exchange Rate API</string>
     <string name="disclaimer">Rates are indicative and may differ from actual buy and sell rates at banks and exchange offices.</string>
+    <string name="clear_amount">Clear amount</string>
+    <string name="history_loading">Loading historical rates…</string>
+    <string name="history_refresh">Refresh history</string>
+    <string name="history_unavailable">Historical rates are not available for this currency pair.</string>
+    <string name="history_empty">Historical data unavailable</string>
+    <string name="history_empty_detail">At least two published rates are needed to show a chart for this period.</string>
+    <string name="history_load_failed">Couldn’t load historical rates. Try again.</string>
+    <string name="history_offline">Connect to the internet to load historical rates for this period.</string>
+    <string name="history_offline_saved">Offline · showing saved history</string>
+    <string name="history_cached_range">Saved range · %1$s – %2$s</string>
+    <string name="history_save_failed">Couldn’t save this history for offline use.</string>
+    <string name="history_attribution">Historical rates by Frankfurter</string>
+    <string name="link_unavailable">Couldn’t open the link.</string>
 </resources>

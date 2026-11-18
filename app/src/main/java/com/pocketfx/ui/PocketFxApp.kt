@@ -96,9 +96,8 @@ internal fun PocketFxApp(model: PocketFxViewModel, window: Window? = null) {
                             )
                         }
                         composable("history") {
-                            val history by model.history.collectAsStateWithLifecycle()
                             HistoryScreen(
-                                preferences, history, cache.data?.snapshot?.rates?.keys.orEmpty(), time,
+                                preferences, model, cache.data?.snapshot?.rates?.keys.orEmpty(), time, online,
                                 onBack = { nav.popBackStack() },
                                 onToggleFavorite = model::toggleFavorite,
                             )

@@ -6,12 +6,10 @@ import com.pocketfx.data.remote.exchangeRatesApi
 import com.pocketfx.data.repository.OpenExchangeRateRepository
 import com.pocketfx.data.repository.RateProblem
 import com.pocketfx.domain.CachedRates
-import com.pocketfx.domain.RateSnapshot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -86,7 +84,6 @@ class ExchangeRateRepositoryTest {
         repository.refresh()
         assertEquals(2, server.requestCount)
         assertEquals(clock.millis(), repository.latest.first()?.lastCheckedAt)
-        assertEquals(1, repository.history(0).first().size)
     }
 
     @Test fun manualRefreshBypassesTtlAndSkipsConcurrentRequest() = runBlocking {
@@ -111,7 +108,6 @@ class ExchangeRateRepositoryTest {
         repository.refresh()
         assertEquals(RateProblem.NETWORK, repository.status.value.problem)
         assertEquals(original, repository.latest.first())
-        assertEquals(1, repository.history(0).first().size)
     }
 
     @Test fun connectionFailureWithEmptyCacheAndRecovery() = runBlocking {
@@ -175,7 +171,6 @@ class ExchangeRateRepositoryTest {
         val recreated = newRepository()
         recreated.refresh()
         assertEquals(original, recreated.latest.first())
-        assertEquals(1, recreated.history(0).first().size)
         assertEquals(1, server.requestCount)
     }
 
@@ -195,17 +190,12 @@ class ExchangeRateRepositoryTest {
 
     private class TestRateStore : RateStore {
         override val latest = MutableStateFlow<CachedRates?>(null)
-        private val snapshots = MutableStateFlow<Map<Long, RateSnapshot>>(emptyMap())
         override suspend fun lastCheckedAt() = latest.value?.lastCheckedAt
-        override fun history(since: Long) = snapshots.map { entries ->
-            entries.values.filter { it.providerUpdatedAt >= since }.sortedBy { it.providerUpdatedAt }
-        }
 
         override suspend fun save(publication: PublishedRates) {
-            val time = publication.snapshot.providerUpdatedAt
-            val existing = snapshots.value[time]
-            if (existing == null) snapshots.value = snapshots.value + (time to publication.snapshot)
-            latest.value = CachedRates(existing ?: publication.snapshot, publication.snapshot.fetchedAt, publication.nextProviderUpdate)
+            val incoming = publication.snapshot
+            val previous = latest.value?.snapshot?.takeIf { it.providerUpdatedAt >= incoming.providerUpdatedAt }
+            latest.value = CachedRates(previous ?: incoming, incoming.fetchedAt, publication.nextProviderUpdate)
         }
     }
 }

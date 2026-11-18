@@ -59,8 +59,6 @@
         <item quantity="many">%1$d дней</item>
         <item quantity="other">%1$d дня</item>
     </plurals>
-    <string name="history_empty">История будет пополняться</string>
-    <string name="history_empty_detail">График появится, когда Pocket FX сохранит хотя бы два опубликованных курса этой пары за выбранный период.</string>
     <string name="history_latest">Последний курс</string>
     <string name="history_min">Минимум</string>
     <string name="history_max">Максимум</string>
@@ -82,4 +80,17 @@
     <string name="version">Версия %1$s</string>
     <string name="attribution">Курсы предоставлены Exchange Rate API</string>
     <string name="disclaimer">Курсы носят справочный характер и могут отличаться от курсов покупки и продажи в банках и обменных пунктах.</string>
+    <string name="clear_amount">Очистить сумму</string>
+    <string name="history_loading">Загружаем исторические курсы…</string>
+    <string name="history_refresh">Обновить историю</string>
+    <string name="history_unavailable">Исторические курсы для этой валютной пары недоступны.</string>
+    <string name="history_empty">Исторические данные недоступны</string>
+    <string name="history_empty_detail">Для графика за этот период нужны как минимум два опубликованных курса.</string>
+    <string name="history_load_failed">Не удалось загрузить исторические курсы. Повторите попытку.</string>
+    <string name="history_offline">Подключитесь к интернету, чтобы загрузить исторические курсы за этот период.</string>
+    <string name="history_offline_saved">Нет сети · сохранённая история</string>
+    <string name="history_cached_range">Сохранённый период · %1$s — %2$s</string>
+    <string name="history_save_failed">Не удалось сохранить историю для просмотра без интернета.</string>
+    <string name="history_attribution">Исторические курсы Frankfurter</string>
+    <string name="link_unavailable">Не удалось открыть ссылку.</string>
 </resources>

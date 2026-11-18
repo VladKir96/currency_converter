@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -47,12 +48,15 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -253,6 +257,8 @@ private fun SourcePanel(
     val locale = LocalAppLocale.current
     val inputLabel = stringResource(R.string.source_amount)
     val currencyLabel = stringResource(R.string.source_currency)
+    val amountFocus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
     val symbols = remember(locale) { DecimalFormatSymbols.getInstance(locale) }
     val transformation = remember(symbols) {
         VisualTransformation { text ->
@@ -279,7 +285,7 @@ private fun SourcePanel(
         BasicTextField(
             value = value,
             onValueChange = onValue,
-            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp).focusRequester(amountFocus)
                 .semantics { contentDescription = inputLabel }.testTag("source-amount"),
             textStyle = MaterialTheme.typography.displaySmall.copy(
                 color = palette.onPrimaryContainer,
@@ -292,15 +298,20 @@ private fun SourcePanel(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = { focus.clearFocus() }),
             decorationBox = { field ->
-                Box(Modifier.fillMaxWidth()) {
-                    if (value.text.isEmpty()) {
-                        Text(
-                            symbols.zeroDigit.toString(),
-                            color = palette.onPrimaryContainer.copy(alpha = 0.65f),
-                            style = MaterialTheme.typography.displaySmall,
-                        )
+                Row(
+                    Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(Modifier.weight(1f)) { field() }
+                    if (value.text.isNotEmpty()) {
+                        IconButton(onClick = {
+                            onValue(TextFieldValue(""))
+                            amountFocus.requestFocus()
+                            keyboard?.show()
+                        }) {
+                            Icon(Icons.Default.Close, stringResource(R.string.clear_amount))
+                        }
                     }
-                    field()
                 }
             },
         )
