@@ -13,6 +13,7 @@ import com.pocketfx.domain.UserPreferences
 import com.pocketfx.domain.isCurrencyCode
 import com.pocketfx.domain.normalizeAmount
 import com.pocketfx.domain.withSource
+import com.pocketfx.domain.withTargetOrder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
@@ -122,6 +123,8 @@ internal class PocketFxViewModel(
             }
         }
     }
+
+    fun reorderTargets(order: List<String>) = edit { it.withTargetOrder(order) }
 
     fun removeTarget(code: String) = edit { it.copy(targets = it.targets - code) }
 

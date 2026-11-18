@@ -15,6 +15,7 @@ import com.pocketfx.data.remote.ProviderId
 import com.pocketfx.data.remote.PublishedRates
 import com.pocketfx.data.remote.RateBase
 import com.pocketfx.data.remote.StrictJson
+import com.pocketfx.domain.HistoryPeriod
 import com.pocketfx.domain.HistoryPoint
 import com.pocketfx.domain.HistoryQuery
 import com.pocketfx.domain.HistorySeries
@@ -36,7 +37,7 @@ import java.util.UUID
 class RateDatabaseTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
     private val now = Instant.parse("2026-11-18T12:00:00Z").toEpochMilli()
-    private val query = HistoryQuery.endingOn("EUR", "USD", 30, LocalDate.of(2026, 11, 18))
+    private val query = HistoryQuery.endingOn("EUR", "USD", HistoryPeriod.MONTH, LocalDate.of(2026, 11, 18))
 
     @Test fun persistsSuccessfulChecksAcrossDatabaseReopens() = runBlocking(Dispatchers.IO) {
         val name = "rates-${UUID.randomUUID()}.db"
@@ -98,7 +99,7 @@ class RateDatabaseTest {
 
     @Test fun persistsIndependentFrankfurterRangesAndCatalogAcrossReopen() = runBlocking(Dispatchers.IO) {
         val name = "history-${UUID.randomUUID()}.db"
-        val week = HistoryQuery.endingOn(query.source, query.target, 7, query.to)
+        val week = HistoryQuery.endingOn(query.source, query.target, HistoryPeriod.WEEK, query.to)
         val points = listOf(HistoryPoint(query.to.minusDays(1), BigDecimal("1.1023456789123456")))
         val monthSeries = HistorySeries(query, now, points)
         val weekSeries = HistorySeries(week, now + 1000, points)
@@ -114,6 +115,8 @@ class RateDatabaseTest {
                 val history = RoomHistoryStore(database.history())
                 assertEquals(monthSeries, history.exact(query))
                 assertEquals(weekSeries, history.exact(week))
+                assertEquals(monthSeries, history.covering(week))
+                assertNull(history.covering(query.reversed()))
                 assertEquals(catalog, history.catalog())
                 assertEquals(weekSeries, history.earlier(week.copy(from = week.from.plusDays(1), to = week.to.plusDays(1))))
                 assertNull(history.exact(query.copy(target = "RUB")))
@@ -123,6 +126,18 @@ class RateDatabaseTest {
             context.deleteDatabase(name)
         }
         Unit
+    }
+
+    @Test fun calendarYearHistoryRemainsAvailableWhenTheDaySpanChanges() = runBlocking(Dispatchers.IO) {
+        Room.inMemoryDatabaseBuilder(context, RateDatabase::class.java).build().useDatabase { database ->
+            val leapDay = LocalDate.of(2024, 2, 29)
+            val leapRange = HistoryQuery.endingOn("EUR", "USD", HistoryPeriod.YEAR, leapDay)
+            val marchRange = HistoryQuery.endingOn("EUR", "USD", HistoryPeriod.YEAR, leapDay.plusDays(1))
+            val history = RoomHistoryStore(database.history())
+            val saved = HistorySeries(leapRange, now, listOf(HistoryPoint(leapDay, BigDecimal("1.1"))))
+            history.save(saved)
+            assertEquals(saved, history.earlier(marchRange))
+        }
     }
 
     private fun createVersionOne(name: String) {

@@ -2,6 +2,7 @@ package com.pocketfx
 
 import com.pocketfx.domain.UserPreferences
 import com.pocketfx.domain.withSource
+import com.pocketfx.domain.withTargetOrder
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Test
@@ -31,5 +32,13 @@ class SourceCurrencyTest {
     @Test fun removesDuplicatesFromLegacyLists() {
         val legacy = initial.copy(targets = listOf("USD", "EUR", "RUB", "USD", "RUB"))
         assertEquals(listOf("EUR", "RUB"), legacy.withSource("USD").targets)
+    }
+    @Test fun dragOrderPersistsThroughSourceSwitchAndRejectsInvalidMembership() {
+        val reordered = initial.withTargetOrder(listOf("RUB", "USD", "RSD"))
+        assertEquals(initial.favorites, reordered.favorites)
+        assertEquals(listOf("RUB", "EUR", "RSD"), reordered.withSource("USD").targets)
+        assertSame(reordered, reordered.withTargetOrder(listOf("RUB", "USD", "USD")))
+        assertSame(reordered, reordered.withTargetOrder(listOf("EUR", "USD", "RSD")))
+        assertSame(reordered, reordered.withTargetOrder(listOf("RUB", "USD")))
     }
 }

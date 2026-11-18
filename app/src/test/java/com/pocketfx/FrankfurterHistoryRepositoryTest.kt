@@ -6,9 +6,11 @@ import com.pocketfx.data.remote.frankfurterApi
 import com.pocketfx.data.repository.FrankfurterHistoryRepository
 import com.pocketfx.data.repository.HistoryProblem
 import com.pocketfx.data.repository.HistoryState
+import com.pocketfx.domain.HistoryPeriod
 import com.pocketfx.domain.HistoryPoint
 import com.pocketfx.domain.HistoryQuery
 import com.pocketfx.domain.HistorySeries
+import com.pocketfx.domain.historyStats
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -49,7 +51,7 @@ class FrankfurterHistoryRepositoryTest {
     private val clock = HistoryClock(Instant.parse("2026-11-18T12:00:00Z"))
     private val store = MemoryHistoryStore()
     private val today = LocalDate.of(2026, 11, 18)
-    private val week = HistoryQuery.endingOn("EUR", "USD", 7, today)
+    private val week = HistoryQuery.endingOn("EUR", "USD", HistoryPeriod.WEEK, today)
     private lateinit var client: OkHttpClient
     private lateinit var repository: FrankfurterHistoryRepository
 
@@ -92,9 +94,17 @@ class FrankfurterHistoryRepositoryTest {
     }
 
     @Test fun sendsInclusiveCalendarRangesForAllPeriodsAndReusesEachOne() = runBlocking {
-        for ((days, from) in listOf(7 to "2026-11-12", 30 to "2026-10-20", 90 to "2026-08-21")) {
+        val periods = listOf(
+            HistoryPeriod.WEEK to "2026-11-12",
+            HistoryPeriod.MONTH to "2026-10-20",
+            HistoryPeriod.QUARTER to "2026-08-21",
+            HistoryPeriod.HALF_YEAR to "2026-05-22",
+            HistoryPeriod.YEAR to "2025-11-18",
+            HistoryPeriod.FIVE_YEARS to "2021-11-18",
+        )
+        for ((period, from) in periods) {
             server.enqueue(rows(rate("2026-11-17", "91.23", quote = "RUB")))
-            val query = HistoryQuery.endingOn("EUR", "RUB", days, today)
+            val query = HistoryQuery.endingOn("EUR", "RUB", period, today)
             assertEquals(query, repository.load(query, false).last().series?.query)
             val url = requireNotNull(server.takeRequest(2, TimeUnit.SECONDS)?.requestUrl)
             assertEquals("/v2/rates", url.encodedPath)
@@ -104,7 +114,7 @@ class FrankfurterHistoryRepositoryTest {
             assertEquals("2026-11-18", url.queryParameter("to"))
             assertEquals(query, repository.load(query, false).last().series?.query)
         }
-        assertEquals(3, server.requestCount)
+        assertEquals(periods.size, server.requestCount)
     }
 
     @Test fun distinguishesEmptyHistoryFromUnsupportedCurrencies() = runBlocking {
@@ -156,7 +166,7 @@ class FrankfurterHistoryRepositoryTest {
         assertEquals(expected, network.series)
         assertEquals(HistoryProblem.LOAD_FAILED, network.problem)
         clock.advance(Duration.ofDays(1))
-        val tomorrow = HistoryQuery.endingOn("EUR", "USD", 7, today.plusDays(1))
+        val tomorrow = HistoryQuery.endingOn("EUR", "USD", HistoryPeriod.WEEK, today.plusDays(1))
         server.enqueue(MockResponse().setResponseCode(503))
         val out = newRepository().load(tomorrow, false).toList()
         assertTrue(out.first().loading)
@@ -194,6 +204,72 @@ class FrankfurterHistoryRepositoryTest {
         assertNull(store.exact(week))
     }
 
+    @Test fun swappingReusesRawObservationsAndRecalculatesAllStatistics() = runBlocking {
+        server.enqueue(rows(rate("2026-11-13", "2"), rate("2026-11-16", "5"), rate("2026-11-17", "4")))
+        val original = requireNotNull(repository.load(week, false).last().series)
+        val inverse = requireNotNull(newRepository().load(week.reversed(), false).last().series)
+        val stats = requireNotNull(historyStats(inverse.points))
+        assertEquals(week.reversed(), inverse.query)
+        assertEquals(original.points.map { it.date }, inverse.points.map { it.date })
+        assertEquals(listOf(BigDecimal("0.5"), BigDecimal("0.2"), BigDecimal("0.25")), inverse.points.map { it.rate })
+        assertEquals(BigDecimal("0.25"), stats.latest)
+        assertEquals(BigDecimal("0.2"), stats.minimum)
+        assertEquals(BigDecimal("0.5"), stats.maximum)
+        assertEquals(0, BigDecimal("-50").compareTo(stats.changePercent))
+        assertEquals(original, repository.load(week, false).last().series)
+        assertNull(store.exact(week.reversed()))
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun previouslySavedBothDirectionsStillSwapReciprocally() = runBlocking {
+        store.save(HistorySeries(week, clock.millis(), listOf(HistoryPoint(today, BigDecimal("2")))))
+        store.save(HistorySeries(week.reversed(), clock.millis(), listOf(HistoryPoint(today, BigDecimal("0.6")))))
+        val forward = requireNotNull(repository.load(week, false).last().series).points.single().rate
+        val reverse = requireNotNull(repository.load(week.reversed(), false).last().series).points.single().rate
+        assertEquals(0, BigDecimal.ONE.compareTo(forward.multiply(reverse, java.math.MathContext.DECIMAL128)))
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun fiveYearsRetainGapsAndServeShorterOrReversedRequestsFromTheSameDownload() = runBlocking {
+        val fiveYears = HistoryQuery.endingOn("EUR", "USD", HistoryPeriod.FIVE_YEARS, today)
+        val days = generateSequence(fiveYears.from) { it.plusDays(1).takeIf { day -> day <= today } }
+            .filter { it != today.minusDays(1) }.toList()
+        val response = days.asReversed().map { day ->
+            val value = when {
+                day == days.first() -> "4"
+                day == days.last() -> "5"
+                day == days[1] -> "2"
+                day == days[2] -> "9"
+                else -> "4.5"
+            }
+            rate(day.toString(), value)
+        }
+        server.enqueue(rows(*response.toTypedArray()))
+        val long = requireNotNull(repository.load(fiveYears, false).last().series)
+        assertTrue(long.points.size > 1800)
+        assertEquals(days, long.points.map { it.date })
+        val stats = requireNotNull(historyStats(long.points))
+        assertEquals(BigDecimal("5"), stats.latest)
+        assertEquals(BigDecimal("2"), stats.minimum)
+        assertEquals(BigDecimal("9"), stats.maximum)
+        assertEquals(0, BigDecimal("25").compareTo(stats.changePercent))
+        val recent = requireNotNull(newRepository().load(week.reversed(), false).last().series)
+        assertEquals(6, recent.points.size)
+        assertEquals(today, recent.points.last().date)
+        assertEquals(BigDecimal("0.2"), recent.points.last().rate)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun unavailableReverseHistoryRequestsTheSelectedOrientation() = runBlocking {
+        server.enqueue(rows())
+        assertTrue(requireNotNull(repository.load(week, false).last().series).points.isEmpty())
+        server.enqueue(rows(rate("2026-11-17", "0.8", base = "USD", quote = "EUR")))
+        val inverse = requireNotNull(repository.load(week.reversed(), false).last().series)
+        assertEquals(BigDecimal("0.8"), inverse.points.single().rate)
+        server.takeRequest(2, TimeUnit.SECONDS)
+        assertEquals("USD", server.takeRequest(2, TimeUnit.SECONDS)?.requestUrl?.queryParameter("base"))
+    }
+
     @Test fun currencyCatalogUsesSupportedFiatCodesAndIsReused() = runBlocking {
         server.enqueue(MockResponse().setBody("""
             [{"iso_code":"RUB","type":"currency"},{"iso_code":"KPW","type":"currency"},
@@ -213,8 +289,8 @@ class FrankfurterHistoryRepositoryTest {
 
     private fun newRepository() = FrankfurterHistoryRepository(frankfurterApi(server.url("/"), client), store, clock)
 
-    private fun rate(day: String, value: String, quote: String = "USD") =
-        """{"date":"$day","base":"EUR","quote":"$quote","rate":$value}"""
+    private fun rate(day: String, value: String, quote: String = "USD", base: String = "EUR") =
+        """{"date":"$day","base":"$base","quote":"$quote","rate":$value}"""
 
     private fun rows(vararg values: String): MockResponse =
         MockResponse().setHeader("Content-Type", "application/json").setBody(values.joinToString(",", "[", "]"))
@@ -230,11 +306,17 @@ class FrankfurterHistoryRepositoryTest {
         private val series = ConcurrentHashMap<HistoryQuery, HistorySeries>()
         private var catalog: HistoryCatalog? = null
         override suspend fun exact(query: HistoryQuery) = series[query]
+        override suspend fun covering(query: HistoryQuery): HistorySeries? = series.values.filter {
+            val saved = it.query
+            saved != query && saved.source == query.source && saved.target == query.target &&
+                saved.from <= query.from && saved.to >= query.to && it.points.isNotEmpty()
+        }.maxByOrNull { it.fetchedAt }
+
         override suspend fun earlier(query: HistoryQuery): HistorySeries? = series.values.filter {
             val previous = it.query
             it.points.isNotEmpty() && previous.to < query.to &&
                 previous.source == query.source && previous.target == query.target &&
-                previous.to.toEpochDay() - previous.from.toEpochDay() == query.to.toEpochDay() - query.from.toEpochDay()
+                previous.period == query.period
         }.maxByOrNull { it.query.to }
 
         override suspend fun save(series: HistorySeries) { this.series[series.query] = series }

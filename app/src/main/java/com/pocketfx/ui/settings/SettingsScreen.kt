@@ -83,7 +83,12 @@ internal fun SettingsScreen(
                                     selected = prefs.language == language,
                                     onClick = { model.setLanguage(language) },
                                     label = {
-                                        Text(stringResource(if (language == AppLanguage.ENGLISH) R.string.language_english else R.string.language_russian))
+                                        val name = when (language) {
+                                            AppLanguage.ENGLISH -> R.string.language_english
+                                            AppLanguage.RUSSIAN -> R.string.language_russian
+                                            AppLanguage.SERBIAN_LATIN -> R.string.language_serbian
+                                        }
+                                        Text(stringResource(name))
                                     },
                                 )
                             }

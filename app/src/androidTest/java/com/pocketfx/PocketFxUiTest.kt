@@ -1,6 +1,8 @@
 package com.pocketfx
 
+import android.content.ClipboardManager
 import android.content.Context
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.test.SemanticsMatcher
@@ -9,7 +11,9 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -17,7 +21,10 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
@@ -35,10 +42,12 @@ import com.pocketfx.data.repository.HistoryState
 import com.pocketfx.data.repository.RateProblem
 import com.pocketfx.data.repository.RefreshStatus
 import com.pocketfx.domain.CachedRates
+import com.pocketfx.domain.HistoryPeriod
 import com.pocketfx.domain.HistoryPoint
 import com.pocketfx.domain.HistoryQuery
 import com.pocketfx.domain.HistorySeries
 import com.pocketfx.domain.RateSnapshot
+import com.pocketfx.domain.UserPreferences
 import com.pocketfx.ui.PocketFxApp
 import com.pocketfx.ui.PocketFxViewModel
 import kotlinx.coroutines.CoroutineScope
@@ -46,6 +55,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
@@ -73,6 +83,7 @@ class PocketFxUiTest {
     private val dataJob = Job()
     private val clock = Clock.fixed(Instant.parse("2026-11-18T12:00:00Z"), ZoneOffset.UTC)
     private lateinit var file: File
+    private lateinit var preferenceStore: UserPreferencesStore
     private val conversionRequests = AtomicInteger()
     private val rates = mapOf("USD" to "1", "EUR" to "0.8", "RSD" to "100", "RUB" to "92.1", "JPY" to "140", "GBP" to "0.5")
         .mapValues { it.value.toBigDecimal() }
@@ -143,6 +154,96 @@ class PocketFxUiTest {
         assertTrue(y.zipWithNext().all { (earlier, later) -> earlier < later })
     }
 
+    @Test fun longPressDragReordersAndPreservesTheOrderWhenSwitchingSource() {
+        show()
+        compose.onNodeWithTag("drag-RUB").performTouchInput { click() }
+        assertResultOrder("USD", "RSD", "RUB")
+        dragAbove("RUB", "USD")
+        waitForTargets(listOf("RUB", "USD", "RSD"))
+        assertResultOrder("RUB", "USD", "RSD")
+        compose.onNodeWithTag("source-picker").performClick()
+        pick("USD").performClick()
+        waitForTargets(listOf("RUB", "EUR", "RSD"))
+        assertResultOrder("RUB", "EUR", "RSD")
+        compose.onNodeWithTag("drag-USD").assertDoesNotExist()
+    }
+
+    @Test fun draggingWorksAfterScrollingToLaterTargets() {
+        val targets = listOf("USD", "RSD", "RUB", "GBP", "JPY", "CAD", "AUD", "NZD", "CHF", "PLN", "CNY", "HKD", "HUF", "NOK", "SEK")
+        show(prefs = UserPreferences(targets = targets))
+        compose.onNodeWithTag("converter-list").performScrollToKey("target-HKD")
+        dragAbove("NOK", "HKD")
+        val expected = targets.toMutableList()
+        expected.remove("NOK")
+        expected.add(expected.indexOf("HKD"), "NOK")
+        waitForTargets(expected)
+        assertResultOrder("NOK", "HKD", "HUF")
+    }
+
+    @Test fun holdingADragNearTheBottomAutomaticallyScrollsThroughTargets() {
+        val targets = listOf(
+            "USD", "RSD", "RUB", "GBP", "JPY", "CAD", "AUD", "NZD", "CHF", "PLN", "CNY", "HKD",
+            "HUF", "NOK", "SEK", "DKK", "CZK", "TRY", "UAH", "INR", "BRL", "MXN", "ARS", "CLP",
+        )
+        show(prefs = UserPreferences(targets = targets))
+        val list = compose.onNodeWithTag("converter-list")
+        val viewport = list.fetchSemanticsNode().boundsInRoot
+        val start = compose.onNodeWithTag("drag-USD").fetchSemanticsNode().boundsInRoot.center - viewport.topLeft
+        compose.onNodeWithTag("target-TRY").assertDoesNotExist()
+        compose.mainClock.autoAdvance = false
+        try {
+            list.performTouchInput {
+                down(start)
+                advanceEventTime(650)
+                moveTo(start)
+                moveTo(Offset(start.x, viewport.height - 12f))
+            }
+            compose.mainClock.advanceTimeBy(1600)
+            list.performTouchInput { up() }
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
+        compose.waitUntil(5000) {
+            runBlocking { preferenceStore.values.first().targets.indexOf("USD") >= targets.indexOf("TRY") }
+        }
+        val reordered = runBlocking { preferenceStore.values.first().targets }
+        assertEquals(targets.drop(1), reordered.filterNot { it == "USD" })
+    }
+
+    @Test fun longPressingAmountCopiesWithoutReorderingAndMenuStillMovesRows() {
+        show()
+        compose.onNodeWithTag("result-RSD").performTouchInput { longClick() }
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        compose.runOnIdle {
+            val clipboard = context.getSystemService(ClipboardManager::class.java)
+            assertEquals("12,500.00", clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        }
+        assertResultOrder("USD", "RSD", "RUB")
+        compose.onNodeWithContentDescription("Options for RUB").performClick()
+        compose.onNodeWithText("Move up").performClick()
+        waitForTargets(listOf("USD", "RUB", "RSD"))
+        assertResultOrder("USD", "RUB", "RSD")
+    }
+
+    private fun dragAbove(code: String, before: String) {
+        val list = compose.onNodeWithTag("converter-list")
+        val viewport = list.fetchSemanticsNode().boundsInRoot
+        val start = compose.onNodeWithTag("drag-$code").fetchSemanticsNode().boundsInRoot.center - viewport.topLeft
+        val row = compose.onNodeWithTag("target-$before").fetchSemanticsNode().boundsInRoot
+        val stop = Offset(start.x, row.center.y - viewport.top - 8f)
+        list.performTouchInput {
+            down(start)
+            advanceEventTime(650)
+            moveTo(start)
+            moveTo(stop)
+            up()
+        }
+    }
+
+    private fun waitForTargets(targets: List<String>) {
+        compose.waitUntil(5000) { runBlocking { preferenceStore.values.first().targets == targets } }
+    }
+
     @Test fun addsAndRemovesTargetsIndependentlyOfFavorites() {
         show()
         scrollConverterTo("Add currency")
@@ -167,8 +268,8 @@ class PocketFxUiTest {
         show()
         compose.onNodeWithContentDescription("History").performClick()
         waitForText("Historical data unavailable")
-        compose.onNodeWithText("30 days").assertIsSelected()
-        compose.onNodeWithText("7 days").performClick().assertIsSelected()
+        period("30D").assertIsSelected()
+        period("7D").performClick().assertIsSelected()
     }
 
     @Test fun showsStoredHistoryAndCanSelectChartObservations() {
@@ -214,13 +315,91 @@ class PocketFxUiTest {
         })
         compose.onNodeWithContentDescription("History").performClick()
         compose.waitUntil(5000) { initialStarted.isCompleted }
-        compose.onNodeWithText("7 days").performClick()
+        period("7D").performClick()
         waitForText("1.25")
         oldResult.complete(Unit)
         compose.waitForIdle()
         compose.onNodeWithText("8.75").assertDoesNotExist()
         compose.onNodeWithText("1.25").assertIsDisplayed()
     }
+
+    @Test fun swappingTwiceKeepsPeriodAndDoesNotChangeConverterSelection() {
+        val observations = listOf(point("2021-11-18", "2"), point("2024-02-29", "5"), point("2026-11-18", "4"))
+        show(historyLoader = { query, _ ->
+            val series = HistorySeries(
+                HistoryQuery.endingOn("EUR", "USD", HistoryPeriod.FIVE_YEARS, query.to),
+                clock.millis(),
+                observations,
+            )
+            flowOf(HistoryState(series.forQuery(query, slice = true), loading = false))
+        })
+        compose.onNodeWithContentDescription("History").performClick()
+        period("5Y").performScrollTo().performClick().assertIsSelected()
+        waitForText("1 EUR = 4 USD")
+        compose.onNodeWithContentDescription("Exchange rate chart").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Swap currencies").performClick()
+        waitForText("1 USD = 0.25 EUR")
+        period("5Y").assertIsSelected()
+        compose.onNodeWithText("-50%").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Swap currencies").performClick()
+        waitForText("1 EUR = 4 USD")
+        period("5Y").assertIsSelected()
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithTag("source-picker").assertTextEquals("€", "EUR")
+        assertResultOrder("USD", "RSD", "RUB")
+    }
+
+    @Test fun rapidDoubleSwapCannotDisplayAnOutdatedPair() {
+        val reversedStarted = CompletableDeferred<Unit>()
+        val reversedResult = CompletableDeferred<Unit>()
+        show(historyLoader = { query, _ ->
+            flow {
+                if (query.source == "USD") {
+                    reversedStarted.complete(Unit)
+                    reversedResult.await()
+                }
+                val rate = if (query.source == "EUR") "4" else "0.25"
+                emit(HistoryState(HistorySeries(query, clock.millis(), listOf(point("2026-11-18", rate))), loading = false))
+            }
+        })
+        compose.onNodeWithContentDescription("History").performClick()
+        waitForText("1 EUR = 4 USD")
+        compose.onNodeWithContentDescription("Swap currencies").performClick()
+        compose.waitUntil(5000) { reversedStarted.isCompleted }
+        compose.onNodeWithContentDescription("Swap currencies").performClick()
+        waitForText("1 EUR = 4 USD")
+        reversedResult.complete(Unit)
+        compose.onNodeWithText("1 USD = 0.25 EUR").assertDoesNotExist()
+    }
+
+    @Test fun serbianLatinLocalizesScreensCurrencyNamesAndNumbersInDarkAndLight() {
+        show(history = listOf(point("2026-11-17", "1.2"), point("2026-11-18", "1.25")))
+        compose.onNodeWithContentDescription("Settings").performClick()
+        compose.onNodeWithText("Srpski").performClick()
+        waitForText("Podešavanja")
+        compose.onNodeWithText("Srpski").assertIsSelected()
+        compose.onNodeWithText("Tamna").performClick()
+        compose.onNodeWithContentDescription("Nazad").performClick()
+        waitForText("Šaljete")
+        compose.onNodeWithTag("result-RSD").assertTextEquals("12.500,00")
+        compose.onNodeWithContentDescription("Obriši iznos").assertIsDisplayed()
+        compose.onNodeWithText("evro", ignoreCase = true).assertIsDisplayed()
+        compose.onNodeWithContentDescription("Istorija").performClick()
+        waitForText("1 EUR = 1,25 USD")
+        compose.onNodeWithContentDescription("Zameni valute").assertIsDisplayed()
+        compose.onNodeWithContentDescription("30 dana").assertIsSelected()
+        compose.onNodeWithContentDescription("Nazad").performClick()
+        compose.onNodeWithContentDescription("Podešavanja").performClick()
+        compose.onNodeWithText("Svetla").performClick()
+        compose.waitUntil(5000) {
+            compose.onAllNodesWithText("Svetla").fetchSemanticsNodes()
+                .any { it.config.getOrElse(SemanticsProperties.Selected) { false } }
+        }
+        compose.onNodeWithText("English").performClick()
+        waitForText("Settings")
+    }
+
+    private fun period(label: String) = compose.onNodeWithTag("period-$label")
 
     private fun point(day: String, value: String) = HistoryPoint(LocalDate.parse(day), BigDecimal(value))
 
@@ -263,6 +442,7 @@ class PocketFxUiTest {
         connected: Boolean = true,
         history: List<HistoryPoint> = emptyList(),
         historyLoader: ((HistoryQuery, Boolean) -> Flow<HistoryState>)? = null,
+        prefs: UserPreferences = UserPreferences(),
     ) {
         val context = ApplicationProvider.getApplicationContext<Context>()
         file = File(context.cacheDir, "ui-${UUID.randomUUID()}.preferences_pb")
@@ -270,6 +450,8 @@ class PocketFxUiTest {
             scope = CoroutineScope(Dispatchers.IO + dataJob),
             produceFile = { file },
         )
+        preferenceStore = UserPreferencesStore(dataStore)
+        if (prefs != UserPreferences()) runBlocking { preferenceStore.update { prefs } }
         val repository = object : ExchangeRateRepository {
             override val latest = flowOf(initial)
             override val status = MutableStateFlow(RefreshStatus(problem = if (connected) null else RateProblem.OFFLINE))
@@ -284,7 +466,7 @@ class PocketFxUiTest {
         }
         val factory = viewModelFactory {
             initializer {
-                PocketFxViewModel(UserPreferencesStore(dataStore), repository, historyRepository, flowOf(connected), clock)
+                PocketFxViewModel(preferenceStore, repository, historyRepository, flowOf(connected), clock)
             }
         }
         val model = ViewModelProvider.create(models, factory)[PocketFxViewModel::class]

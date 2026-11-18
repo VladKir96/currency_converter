@@ -12,6 +12,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -47,24 +48,46 @@ internal class FrankfurterHistoryRepository(
             return@flow
         }
 
-        val exact = loadOrNull { store.exact(query) }
-        if (!force && exact?.let { isFresh(it.fetchedAt) } == true) {
-            emit(HistoryState(exact, loading = false))
+        val cached = coveringSeries(query)
+        if (!force && cached?.let { isFresh(it.fetchedAt) } == true) {
+            emit(HistoryState(cached.forQuery(query, slice = true), loading = false))
             return@flow
         }
 
-        val saved = exact ?: loadOrNull { store.earlier(query) }
+        val earlier = if (cached == null) earlierSeries(query) else null
+        val saved = cached?.forQuery(query, slice = true) ?: earlier?.forQuery(query, slice = false)
         emit(HistoryState(saved))
         val state = seriesLock.withLock {
-            val current = loadOrNull { store.exact(query) }
-            if (current != null && (current != exact || !force && isFresh(current.fetchedAt))) {
-                HistoryState(current, loading = false)
+            val current = coveringSeries(query)
+            if (current != null && (current != cached || !force && isFresh(current.fetchedAt))) {
+                HistoryState(current.forQuery(query, slice = true), loading = false)
             } else {
-                fetch(query, current ?: saved)
+                val existing = current ?: cached ?: earlier
+                val upstream = if (existing?.query?.source == query.target) query.reversed() else query
+                fetch(upstream, query, saved)
             }
         }
         emit(state)
+    }.flowOn(Dispatchers.Default)
+
+    private suspend fun coveringSeries(query: HistoryQuery): HistorySeries? {
+        val reverse = query.reversed()
+        val direct = loadOrNull { store.exact(query) }
+        val inverse = loadOrNull { store.exact(reverse) }
+        val exact = listOfNotNull(direct, inverse).filter { it.points.isNotEmpty() }
+        val newestExact = exact.maxWithOrNull(ByFetchTime)
+        if (newestExact != null && isFresh(newestExact.fetchedAt)) return newestExact
+
+        // Both directions choose the same underlying observations, including when both were cached.
+        return (exact + listOfNotNull(
+            loadOrNull { store.covering(query) },
+            loadOrNull { store.covering(reverse) },
+        )).maxWithOrNull(ByFetchTime) ?: direct
     }
+
+    private suspend fun earlierSeries(query: HistoryQuery): HistorySeries? =
+        listOfNotNull(loadOrNull { store.earlier(query) }, loadOrNull { store.earlier(query.reversed()) })
+            .maxWithOrNull(compareBy<HistorySeries> { it.query.to }.then(ByFetchTime))
 
     override fun currencies(): Flow<List<String>> = flow {
         val cached = loadOrNull { store.catalog() }
@@ -90,18 +113,18 @@ internal class FrankfurterHistoryRepository(
         if (updated != null && updated != cached?.codes) emit(updated)
     }
 
-    private suspend fun fetch(query: HistoryQuery, saved: HistorySeries?): HistoryState {
+    private suspend fun fetch(upstream: HistoryQuery, display: HistoryQuery, saved: HistorySeries?): HistoryState {
         val series = try {
-            val response = api.rates(query.source, query.target, query.from.toString(), query.to.toString())
+            val response = api.rates(upstream.source, upstream.target, upstream.from.toString(), upstream.to.toString())
             response.errorBody()?.close()
             if (response.code() == 404 || response.code() == 422) {
                 return HistoryState(loading = false, problem = HistoryProblem.UNSUPPORTED)
             }
 
             val points = response.body()?.use { body ->
-                withContext(Dispatchers.Default) { body.readHistory(query) }
+                withContext(Dispatchers.Default) { body.readHistory(upstream) }
             } ?: return HistoryState(saved, loading = false, problem = HistoryProblem.LOAD_FAILED)
-            HistorySeries(query, clock.millis(), points)
+            HistorySeries(upstream, clock.millis(), points)
         } catch (error: CancellationException) {
             throw error
         } catch (_: UnknownHostException) {
@@ -114,11 +137,11 @@ internal class FrankfurterHistoryRepository(
 
         return try {
             store.save(series)
-            HistoryState(series, loading = false)
+            HistoryState(series.forQuery(display, slice = true), loading = false)
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {
-            HistoryState(series, loading = false, problem = HistoryProblem.STORAGE)
+            HistoryState(series.forQuery(display, slice = true), loading = false, problem = HistoryProblem.STORAGE)
         }
     }
 
@@ -135,5 +158,6 @@ internal class FrankfurterHistoryRepository(
 
     private companion object {
         val CacheTtlMillis = Duration.ofHours(24).toMillis()
+        val ByFetchTime = compareBy<HistorySeries> { it.fetchedAt }.thenBy { it.query.source }
     }
 }

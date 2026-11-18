@@ -11,6 +11,8 @@ import com.pocketfx.domain.AppLanguage
 import com.pocketfx.domain.ThemeMode
 import com.pocketfx.domain.UserPreferences
 import com.pocketfx.domain.withSource
+import com.pocketfx.domain.withTargetOrder
+import com.pocketfx.ui.components.formatDay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,6 +23,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.time.LocalDate
 import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
@@ -71,6 +74,28 @@ class PreferencesTest {
             assertEquals(UserPreferences(targets = listOf("USD", "RUB")), UserPreferencesStore(datastore).values.first())
         } finally {
             job.cancelAndJoin()
+            file.delete()
+        }
+        Unit
+    }
+
+    @Test fun serbianLatinAndDraggedOrderSurvivePreferenceStoreRecreation() = runBlocking {
+        val file = File(context.cacheDir, "prefs-${UUID.randomUUID()}.preferences_pb")
+        val writer = Job()
+        val reader = Job()
+        val order = listOf("RUB", "USD", "RSD")
+        try {
+            val first = UserPreferencesStore(store(file, writer))
+            first.update { it.withTargetOrder(order).copy(language = AppLanguage.SERBIAN_LATIN) }
+            writer.cancelAndJoin()
+            val restored = UserPreferencesStore(store(file, reader)).values.first()
+            assertEquals(order, restored.targets)
+            assertEquals("sr-Latn-RS", restored.language.locale.toLanguageTag())
+            val date = formatDay(LocalDate.of(2026, 11, 18), restored.language.locale, includeYear = true)
+            org.junit.Assert.assertTrue(Regex("18\\. ?11\\. ?2026\\.?").matches(date))
+        } finally {
+            writer.cancelAndJoin()
+            reader.cancelAndJoin()
             file.delete()
         }
         Unit

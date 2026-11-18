@@ -1,5 +1,9 @@
 package com.pocketfx.ui.history
 
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,17 +29,22 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -43,11 +52,10 @@ import com.pocketfx.R
 import com.pocketfx.data.repository.HistoryProblem
 import com.pocketfx.data.repository.HistoryState
 import com.pocketfx.domain.DefaultCurrencies
-import com.pocketfx.domain.HistoryPeriods
+import com.pocketfx.domain.HistoryPeriod
 import com.pocketfx.domain.HistoryQuery
 import com.pocketfx.domain.HistoryStats
 import com.pocketfx.domain.UserPreferences
-import com.pocketfx.domain.historyStats
 import com.pocketfx.ui.PocketFxViewModel
 import com.pocketfx.ui.components.ContentWidth
 import com.pocketfx.ui.components.CurrencyPicker
@@ -87,20 +95,20 @@ internal fun HistoryScreen(
     var target by rememberSaveable {
         mutableStateOf(prefs.targets.firstOrNull { it != prefs.sourceCurrency } ?: codes.first { it != prefs.sourceCurrency })
     }
-    var days by rememberSaveable { mutableIntStateOf(30) }
+    var period by rememberSaveable { mutableStateOf(HistoryPeriod.MONTH) }
     var picker by rememberSaveable { mutableStateOf<PairSide?>(null) }
     val today = Instant.ofEpochMilli(now).atOffset(ZoneOffset.UTC).toLocalDate()
-    val query = remember(source, target, days, today) { HistoryQuery.endingOn(source, target, days, today) }
+    val query = remember(source, target, period, today) { HistoryQuery.endingOn(source, target, period, today) }
     val refreshes = remember(query) { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
     val refresh: () -> Unit = { refreshes.tryEmit(Unit) }
-    val history = key(query) {
-        val flow = remember(model) { model.history(query, refreshes) }
-        val state by flow.collectAsStateWithLifecycle(initialValue = HistoryState())
-        state
+    val presentation = key(query) {
+        val flow = remember(model) { model.history(query, refreshes).prepareChart() }
+        val value by flow.collectAsStateWithLifecycle(initialValue = HistoryPresentation())
+        value
     }
-    val points = history.series?.points.orEmpty()
-    val stats = remember(points) { historyStats(points) }
-    val latest = stats?.latest ?: points.singleOrNull()?.rate
+    val history = presentation.state
+    val chart = presentation.chart
+    val latest = chart?.stats?.latest ?: history.series?.points?.singleOrNull()?.rate
 
     Scaffold(
         topBar = {
@@ -120,16 +128,41 @@ internal fun HistoryScreen(
             ) {
                 item("pair") {
                     Panel {
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.Bottom,
+                        ) {
                             PairButton(R.string.source_currency, source, Modifier.weight(1f)) { picker = PairSide.SOURCE }
+                            IconButton(onClick = {
+                                val previousSource = source
+                                source = target
+                                target = previousSource
+                            }) {
+                                Icon(painterResource(R.drawable.ic_swap), stringResource(R.string.swap_currencies))
+                            }
                             PairButton(R.string.target_currency, target, Modifier.weight(1f)) { picker = PairSide.TARGET }
                         }
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
-                            for (period in HistoryPeriods) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = 8.dp).horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            for (option in HistoryPeriod.entries) {
+                                val units = if (option.years) R.plurals.period_years else R.plurals.period_days
+                                val short = if (option.years) R.string.period_short_years else R.string.period_short_days
+                                val spoken = pluralStringResource(units, option.amount, option.amount)
+                                val label = stringResource(short, option.amount)
+                                val bringIntoView = remember { BringIntoViewRequester() }
+                                val selected = period == option
+                                LaunchedEffect(selected) {
+                                    if (selected) bringIntoView.bringIntoView()
+                                }
                                 FilterChip(
-                                    selected = days == period,
-                                    onClick = { days = period },
-                                    label = { Text(pluralStringResource(R.plurals.period_days, period, period)) },
+                                    selected = selected,
+                                    onClick = { period = option },
+                                    modifier = Modifier.bringIntoViewRequester(bringIntoView)
+                                        .testTag("period-" + label)
+                                        .semantics { contentDescription = spoken },
+                                    label = { Text(label, Modifier.clearAndSetSemantics {}) },
                                 )
                             }
                         }
@@ -151,9 +184,9 @@ internal fun HistoryScreen(
                 }
                 item("chart") {
                     Panel {
-                        if (stats != null) {
-                            RateChart(points, stats)
-                            HistorySummary(stats, Modifier.padding(top = 8.dp))
+                        if (chart != null) {
+                            RateChart(chart)
+                            HistorySummary(chart.stats, Modifier.padding(top = 8.dp))
                         }
                         HistoryFeedback(history, query, online, refresh)
                     }

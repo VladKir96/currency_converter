@@ -93,4 +93,13 @@
     <string name="history_save_failed">Не удалось сохранить историю для просмотра без интернета.</string>
     <string name="history_attribution">Исторические курсы Frankfurter</string>
     <string name="link_unavailable">Не удалось открыть ссылку.</string>
+    <string name="language_serbian">Srpski</string>
+    <string name="swap_currencies">Поменять валюты местами</string>
+    <string name="reorder_currency">Нажмите, удерживайте и перетащите %1$s для изменения порядка</string>
+    <plurals name="period_years">
+        <item quantity="one">%1$d год</item>
+        <item quantity="few">%1$d года</item>
+        <item quantity="many">%1$d лет</item>
+        <item quantity="other">%1$d года</item>
+    </plurals>
 </resources>

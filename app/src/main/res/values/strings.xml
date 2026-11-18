@@ -91,4 +91,13 @@
     <string name="history_save_failed">Couldn’t save this history for offline use.</string>
     <string name="history_attribution">Historical rates by Frankfurter</string>
     <string name="link_unavailable">Couldn’t open the link.</string>
+    <string name="language_serbian">Srpski</string>
+    <string name="swap_currencies">Swap currencies</string>
+    <string name="reorder_currency">Long-press and drag to reorder %1$s</string>
+    <plurals name="period_years">
+        <item quantity="one">%1$d year</item>
+        <item quantity="other">%1$d years</item>
+    </plurals>
+    <string name="period_short_days" translatable="false">%1$dD</string>
+    <string name="period_short_years" translatable="false">%1$dY</string>
 </resources>

@@ -9,6 +9,7 @@ enum class ThemeMode { SYSTEM, LIGHT, DARK }
 enum class AppLanguage(val locale: Locale) {
     ENGLISH(Locale.US),
     RUSSIAN(Locale.forLanguageTag("ru-RU")),
+    SERBIAN_LATIN(Locale.forLanguageTag("sr-Latn-RS")),
 }
 
 data class UserPreferences(
@@ -29,4 +30,9 @@ internal fun UserPreferences.withSource(code: String): UserPreferences {
         existingTargets + sourceCurrency
     }
     return copy(sourceCurrency = code, targets = updated)
+}
+
+internal fun UserPreferences.withTargetOrder(order: List<String>): UserPreferences {
+    if (order.size != targets.size || sourceCurrency in order || order.toSet() != targets.toSet()) return this
+    return copy(targets = order.toList())
 }

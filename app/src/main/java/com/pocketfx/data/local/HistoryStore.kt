@@ -7,6 +7,7 @@ import androidx.room.Upsert
 import com.google.gson.reflect.TypeToken
 import com.pocketfx.data.remote.FrankfurterProvider
 import com.pocketfx.data.remote.StrictJson
+import com.pocketfx.domain.HistoryPeriod
 import com.pocketfx.domain.HistoryPoint
 import com.pocketfx.domain.HistoryQuery
 import com.pocketfx.domain.HistorySeries
@@ -44,10 +45,21 @@ internal interface HistoryDao {
     @Query("""
         SELECT * FROM history_series WHERE provider = :provider
         AND sourceCurrency = :source AND targetCurrency = :target
-        AND toDay < :before AND fromDay = toDay - :span AND pointsJson != '{}'
+        AND fromDay <= :from AND toDay >= :to AND (fromDay != :from OR toDay != :to)
+        AND pointsJson != '{}'
+        ORDER BY fetchedAt DESC, toDay - fromDay LIMIT 1
+    """)
+    suspend fun covering(provider: String, source: String, target: String, from: Long, to: Long): HistoryCacheEntity?
+
+    @Query("""
+        SELECT * FROM history_series WHERE provider = :provider
+        AND sourceCurrency = :source AND targetCurrency = :target
+        AND toDay < :before AND toDay - fromDay BETWEEN :shortest AND :longest AND pointsJson != '{}'
         ORDER BY toDay DESC LIMIT 1
     """)
-    suspend fun earlier(provider: String, source: String, target: String, span: Long, before: Long): HistoryCacheEntity?
+    suspend fun earlier(
+        provider: String, source: String, target: String, shortest: Long, longest: Long, before: Long,
+    ): HistoryCacheEntity?
 
     @Upsert
     suspend fun save(entry: HistoryCacheEntity)
@@ -63,6 +75,7 @@ internal data class HistoryCatalog(val fetchedAt: Long, val codes: List<String>)
 
 internal interface HistoryStore {
     suspend fun exact(query: HistoryQuery): HistorySeries?
+    suspend fun covering(query: HistoryQuery): HistorySeries?
     suspend fun earlier(query: HistoryQuery): HistorySeries?
     suspend fun save(series: HistorySeries)
     suspend fun catalog(): HistoryCatalog?
@@ -74,9 +87,20 @@ internal class RoomHistoryStore(private val dao: HistoryDao) : HistoryStore {
         dao.exact(FrankfurterProvider, query.source, query.target, query.from.toEpochDay(), query.to.toEpochDay())?.toSeries()
     }
 
+    override suspend fun covering(query: HistoryQuery): HistorySeries? = withContext(Dispatchers.Default) {
+        dao.covering(FrankfurterProvider, query.source, query.target, query.from.toEpochDay(), query.to.toEpochDay())?.toSeries()
+    }
+
     override suspend fun earlier(query: HistoryQuery): HistorySeries? = withContext(Dispatchers.Default) {
         val end = query.to.toEpochDay()
-        dao.earlier(FrankfurterProvider, query.source, query.target, end - query.from.toEpochDay(), end)?.toSeries()
+        val span = end - query.from.toEpochDay()
+        // Calendar-year spans can change at a leap day even when the selected period stays the same.
+        val spans = when (query.period) {
+            HistoryPeriod.YEAR -> 365L..366L
+            HistoryPeriod.FIVE_YEARS -> 1825L..1827L
+            else -> span..span
+        }
+        dao.earlier(FrankfurterProvider, query.source, query.target, spans.first, spans.last, end)?.toSeries()
     }
 
     override suspend fun save(series: HistorySeries) = withContext(Dispatchers.Default) {

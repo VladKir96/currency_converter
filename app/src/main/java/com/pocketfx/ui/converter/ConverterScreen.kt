@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.os.Build
 import android.widget.Toast
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +17,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -37,13 +41,17 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -51,11 +59,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -73,6 +85,8 @@ import androidx.compose.ui.text.input.TransformedText
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pocketfx.R
 import com.pocketfx.data.repository.RefreshStatus
 import com.pocketfx.domain.DefaultCurrencies
@@ -127,6 +141,30 @@ internal fun ConverterScreen(
     val refresh = { model.refresh(force = true) }
     val focus = LocalFocusManager.current
 
+    val list = rememberLazyListState()
+    val reorder = remember(list) { TargetDragState(list) }
+    val haptics = LocalHapticFeedback.current
+    val savedTargets by rememberUpdatedState(prefs.targets)
+    val displayed = reorder.order ?: prefs.targets
+    val writeFailed by model.settingsWriteFailed.collectAsStateWithLifecycle()
+    val edgeSize = with(LocalDensity.current) { 76.dp.toPx() }
+
+    LaunchedEffect(prefs.targets, writeFailed) { reorder.reconcile(prefs.targets, writeFailed) }
+    LaunchedEffect(reorder.draggedCode, edgeSize) {
+        if (reorder.draggedCode == null) return@LaunchedEffect
+        var previousFrame = withFrameNanos { it }
+        while (reorder.draggedCode != null) {
+            val frame = withFrameNanos { it }
+            val elapsed = ((frame - previousFrame) / 1_000_000_000f).coerceAtMost(0.05f)
+            previousFrame = frame
+            val delta = reorder.autoScrollSpeed(edgeSize) * elapsed
+            if (delta != 0f) {
+                list.scrollBy(delta)
+                reorder.updateOrder()
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             PocketTopBar(R.string.app_name) {
@@ -142,50 +180,88 @@ internal fun ConverterScreen(
     ) { insets ->
         Box(Modifier.fillMaxSize().padding(insets), contentAlignment = Alignment.TopCenter) {
             LazyColumn(
-                Modifier.widthIn(max = ContentWidth).fillMaxWidth().testTag("converter-list"),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                Modifier.widthIn(max = ContentWidth).fillMaxWidth().testTag("converter-list")
+                    .targetReorderGestures(
+                        reorder,
+                        savedTargets = { savedTargets },
+                        onStart = { haptics.performHapticFeedback(HapticFeedbackType.LongPress) },
+                        onDrop = model::reorderTargets,
+                    ),
+                state = list,
                 contentPadding = PaddingValues(start = 18.dp, top = 8.dp, end = 18.dp, bottom = 12.dp),
             ) {
                 item("source") {
-                    SourcePanel(
-                        info = currencyInfo(prefs.sourceCurrency, locale),
-                        value = input,
-                        onValue = { edited ->
-                            normalizeAmount(edited.text)?.let { canonical ->
-                                val changed = input.text != canonical
-                                input = edited.copy(text = canonical)
-                                if (changed) model.setAmount(canonical)
-                            }
-                        },
-                        onPick = {
-                            focus.clearFocus()
-                            picker = Picker.SOURCE
-                        },
-                    )
+                    Box(Modifier.padding(bottom = 14.dp)) {
+                        SourcePanel(
+                            info = currencyInfo(prefs.sourceCurrency, locale),
+                            value = input,
+                            onValue = { edited ->
+                                normalizeAmount(edited.text)?.let { canonical ->
+                                    val changed = input.text != canonical
+                                    input = edited.copy(text = canonical)
+                                    if (changed) model.setAmount(canonical)
+                                }
+                            },
+                            onPick = {
+                                focus.clearFocus()
+                                picker = Picker.SOURCE
+                            },
+                        )
+                    }
                 }
-                item("results_heading") { SectionHeading(stringResource(R.string.you_receive)) }
-                item("targets") {
-                    Panel(padding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)) {
-                        if (prefs.targets.isEmpty()) {
-                            MutedText(stringResource(R.string.no_targets), Modifier.padding(12.dp))
+                item("results_heading") {
+                    SectionHeading(stringResource(R.string.you_receive), Modifier.padding(bottom = 14.dp))
+                }
+                if (displayed.isEmpty()) {
+                    item("empty_targets") {
+                        Panel { MutedText(stringResource(R.string.no_targets)) }
+                    }
+                }
+                itemsIndexed(displayed, key = { _, code -> targetKey(code) }) { index, code ->
+                    val dragging = reorder.draggedCode == code
+                    val first = index == 0
+                    val last = index == displayed.lastIndex
+                    val placement = if (dragging) {
+                        Modifier.zIndex(1f).graphicsLayer {
+                            translationY = reorder.translationY()
+                            scaleX = 1.015f
+                            scaleY = 1.015f
                         }
-                        prefs.targets.forEachIndexed { index, code ->
-                            androidx.compose.runtime.key(code) {
-                                if (index > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                                val currentRate = convert(BigDecimal.ONE, prefs.sourceCurrency, code, rates)
-                                val result = amount?.let { convert(it, prefs.sourceCurrency, code, rates) }
-                                ResultRow(
-                                    info = currencyInfo(code, locale),
-                                    source = prefs.sourceCurrency,
-                                    value = result,
-                                    rate = currentRate,
-                                    showRateUnavailable = cache.data != null,
-                                    canMoveUp = index > 0,
-                                    canMoveDown = index < prefs.targets.lastIndex,
-                                    onMove = { model.moveTarget(code, it) },
-                                    onRemove = { model.removeTarget(code) },
-                                )
-                            }
+                    } else Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null)
+                    val shape = if (dragging) RoundedCornerShape(16.dp) else RoundedCornerShape(
+                        topStart = if (first) 22.dp else 0.dp,
+                        topEnd = if (first) 22.dp else 0.dp,
+                        bottomStart = if (last) 22.dp else 0.dp,
+                        bottomEnd = if (last) 22.dp else 0.dp,
+                    )
+                    val currentRate = convert(BigDecimal.ONE, prefs.sourceCurrency, code, rates)
+                    val result = amount?.let { convert(it, prefs.sourceCurrency, code, rates) }
+                    Surface(
+                        modifier = placement.fillMaxWidth().testTag(targetKey(code)),
+                        shape = shape,
+                        color = if (dragging) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surface,
+                        shadowElevation = if (dragging) 5.dp else 0.dp,
+                    ) {
+                        Column(Modifier.padding(horizontal = 10.dp)) {
+                            if (!first) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                            ResultRow(
+                                info = currencyInfo(code, locale),
+                                source = prefs.sourceCurrency,
+                                value = result,
+                                rate = currentRate,
+                                showRateUnavailable = cache.data != null,
+                                canDrag = displayed.size > 1,
+                                canMoveUp = !first,
+                                canMoveDown = !last,
+                                onMove = {
+                                    reorder.clearPreview()
+                                    model.moveTarget(code, it)
+                                },
+                                onRemove = {
+                                    reorder.clearPreview()
+                                    model.removeTarget(code)
+                                },
+                            )
                         }
                     }
                 }
@@ -195,7 +271,7 @@ internal fun ConverterScreen(
                             focus.clearFocus()
                             picker = Picker.TARGETS
                         },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
                     ) {
                         Icon(Icons.Default.Add, null, Modifier.padding(end = 6.dp))
                         Text(stringResource(R.string.add_currency))
@@ -203,7 +279,7 @@ internal fun ConverterScreen(
                 }
                 if (cache.data == null) {
                     item("first_download") {
-                        Panel {
+                        Panel(Modifier.padding(top = 14.dp)) {
                             if (!cache.loaded || status.refreshing) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -220,8 +296,12 @@ internal fun ConverterScreen(
                         }
                     }
                 }
-                item("status") { RateStatusPanel(cache.data, status, cache.failed, online, now, refresh) }
-                item("attribution") { RateAttribution() }
+                item("status") {
+                    Box(Modifier.padding(top = 14.dp)) {
+                        RateStatusPanel(cache.data, status, cache.failed, online, now, refresh)
+                    }
+                }
+                item("attribution") { RateAttribution(Modifier.padding(top = 14.dp)) }
             }
         }
     }
@@ -326,6 +406,7 @@ private fun ResultRow(
     value: BigDecimal?,
     rate: BigDecimal?,
     showRateUnavailable: Boolean,
+    canDrag: Boolean,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
     onMove: (Int) -> Unit,
@@ -350,6 +431,14 @@ private fun ResultRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(9.dp),
     ) {
+        if (canDrag) {
+            Icon(
+                painterResource(R.drawable.ic_drag_handle),
+                stringResource(R.string.reorder_currency, info.code),
+                Modifier.size(18.dp).testTag("drag-${info.code}"),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         CurrencyMark(info.symbol)
         Column(Modifier.weight(1f)) {
             Row(
@@ -366,13 +455,15 @@ private fun ResultRow(
                             true
                         }
                     }
-                Text(
-                    display,
-                    Modifier.weight(1f).then(copyModifier).testTag("result-${info.code}"),
-                    textAlign = TextAlign.End,
-                    style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum"),
-                    fontWeight = FontWeight.SemiBold,
-                )
+                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                    Text(
+                        display,
+                        copyModifier.testTag("result-${info.code}"),
+                        textAlign = TextAlign.End,
+                        style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum"),
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
             }
             if (rate != null) MutedText(stringResource(R.string.pair_rate, source, rate.asRate(locale), info.code))
             else if (showRateUnavailable) MutedText(stringResource(R.string.no_rate))
