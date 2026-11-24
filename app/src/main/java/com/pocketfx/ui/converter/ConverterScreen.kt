@@ -76,6 +76,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -96,6 +97,7 @@ import com.pocketfx.domain.normalizeAmount
 import com.pocketfx.domain.parseAmount
 import com.pocketfx.ui.PocketFxViewModel
 import com.pocketfx.ui.RateCacheState
+import com.pocketfx.ui.calculator.CalculatorBottomSheet
 import com.pocketfx.ui.components.ContentWidth
 import com.pocketfx.ui.components.CurrencyInfo
 import com.pocketfx.ui.components.CurrencyMark
@@ -137,6 +139,7 @@ internal fun ConverterScreen(
     var input by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(prefs.sourceAmount))
     }
+    val calculator by model.calculator.collectAsStateWithLifecycle()
     val amount = remember(input.text) { parseAmount(input.text) }
     val refresh = { model.refresh(force = true) }
     val focus = LocalFocusManager.current
@@ -205,6 +208,10 @@ internal fun ConverterScreen(
                             onPick = {
                                 focus.clearFocus()
                                 picker = Picker.SOURCE
+                            },
+                            onCalculator = {
+                                focus.clearFocus()
+                                model.openCalculator(input.text)
                             },
                         )
                     }
@@ -306,6 +313,14 @@ internal fun ConverterScreen(
         }
     }
 
+    calculator?.let { state ->
+        CalculatorBottomSheet(
+            state, model::calculatorKey,
+            onApply = { model.applyCalculator()?.let { input = TextFieldValue(it, TextRange(it.length)) } },
+            onClose = model::closeCalculator,
+        )
+    }
+
     picker?.let { mode ->
         CurrencyPicker(
             title = if (mode == Picker.SOURCE) R.string.choose_source else R.string.manage_targets,
@@ -331,6 +346,7 @@ private fun SourcePanel(
     value: TextFieldValue,
     onValue: (TextFieldValue) -> Unit,
     onPick: () -> Unit,
+    onCalculator: () -> Unit,
 ) {
     val palette = MaterialTheme.colorScheme
     val focus = LocalFocusManager.current
@@ -391,6 +407,9 @@ private fun SourcePanel(
                         }) {
                             Icon(Icons.Default.Close, stringResource(R.string.clear_amount))
                         }
+                    }
+                    IconButton(onClick = onCalculator) {
+                        Icon(painterResource(R.drawable.ic_calculator), stringResource(R.string.calculator))
                     }
                 }
             },

@@ -10,6 +10,8 @@ import com.pocketfx.domain.CachedRates
 import com.pocketfx.domain.HistoryQuery
 import com.pocketfx.domain.ThemeMode
 import com.pocketfx.domain.UserPreferences
+import com.pocketfx.domain.calculator.CalculatorKey
+import com.pocketfx.domain.calculator.CalculatorState
 import com.pocketfx.domain.isCurrencyCode
 import com.pocketfx.domain.normalizeAmount
 import com.pocketfx.domain.withSource
@@ -44,6 +46,9 @@ internal class PocketFxViewModel(
     connected: Flow<Boolean>,
     private val clock: Clock,
 ) : ViewModel() {
+    private val calculatorState = MutableStateFlow<CalculatorState?>(null)
+    val calculator = calculatorState.asStateFlow()
+
     private val preferenceState = MutableStateFlow<UserPreferences?>(null)
     private val cacheState = MutableStateFlow(RateCacheState())
     private val preferenceReadError = MutableStateFlow(false)
@@ -102,6 +107,19 @@ internal class PocketFxViewModel(
 
     fun refresh(force: Boolean = false) {
         viewModelScope.launch { rates.refresh(force) }
+    }
+
+    fun openCalculator(amount: String) { calculatorState.value = CalculatorState.start(amount) }
+
+    fun calculatorKey(key: CalculatorKey) { calculatorState.value = calculatorState.value?.press(key) }
+
+    fun closeCalculator() { calculatorState.value = null }
+
+    fun applyCalculator(): String? {
+        val amount = calculatorState.value?.amount ?: return null
+        setAmount(amount)
+        closeCalculator()
+        return amount
     }
 
     fun setAmount(input: String) {

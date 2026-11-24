@@ -21,6 +21,10 @@ The first launch uses English, the system theme, and 100 EUR converted to USD, R
 
 Settings offers English, Russian, and Serbian Latin, along with the system, light, and dark themes. Settings also shows data freshness and lets you request a refresh. Your choices and amount are restored when you reopen the app.
 
+### Calculator
+
+Tap the calculator icon beside the source amount to start with that value. The keypad works offline and evaluates multiplication and division before addition and subtraction. **Apply to converter** updates the amount and recalculates targets from the rates already present. Applied values round to six fractional digits using half-even rounding. Negative values and amounts above the converter’s 12-digit limit stay in the calculator. Close the sheet to discard an unfinished calculation.
+
 ## Architecture
 
 - Jetpack Compose and Material 3 render the Converter, History, and Settings destinations. The ViewModel exposes state using StateFlow.
@@ -57,6 +61,37 @@ On November 18, 2026, Frankfurter returned observations for all 12 directions am
 
 For the 90-day EUR series ending November 18, Frankfurter rejected FOK, KID, and TVD as invalid currency codes. It recognized BGN, CLF, HRK, SLL, and ZWL and returned no observations for that window. Pocket FX displays localized messages for both cases.
 
+## Publishing APK updates
+
+Pocket FX checks a public HTTPS manifest on launch or foreground return when the previous successful check was at least 24 hours ago. **Settings → App updates** can check immediately. The default build has no update feed. Configure it when building the APK you distribute.
+
+1. Choose a permanent manifest URL on GitHub Pages or another static HTTPS host. A stable GitHub release asset URL such as `https://github.com/OWNER/REPO/releases/latest/download/update-manifest.json` also works. Keep the URL stable so existing installations can find later versions.
+2. Set up a stable distribution signing key through Android Studio or provide `POCKET_FX_KEYSTORE`, `POCKET_FX_KEYSTORE_PASSWORD`, `POCKET_FX_KEY_ALIAS`, and `POCKET_FX_KEY_PASSWORD` in your shell or CI secret store. Keep the keystore outside the repository, back it up securely, and use the same signing identity for every release. [Android signing guide](https://developer.android.com/studio/publish/app-signing)
+3. Build the release with a higher integer `versionCode` than the previous release. Keep the application ID `com.pocketfx`. `versionName` is the label shown to users.
+
+   ```sh
+   ./gradlew assembleRelease \
+     -PpocketFxUpdateManifestUrl="$POCKET_FX_MANIFEST_URL" \
+     -PpocketFxVersionCode=5 -PpocketFxVersionName=1.3.1
+   ```
+
+4. Verify the signed APK with `apksigner verify --print-certs app/build/outputs/apk/release/app-release.apk`. Create a draft GitHub release, choose its version tag, and upload the exact signed APK under a versioned name. [GitHub release guide](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository)
+5. Generate the metadata from the same bytes you uploaded. Set `POCKET_FX_APK_URL` to the public release asset URL and use the SDK’s `aapt` executable.
+
+   ```sh
+   python3 scripts/generate_update_manifest.py \
+     app/build/outputs/apk/release/app-release.apk "$POCKET_FX_APK_URL" \
+     --aapt "$ANDROID_HOME/build-tools/36.0.0/aapt" \
+     --notes release-notes.json > update-manifest.json
+   ```
+
+   Release notes are optional and may include `en`, `ru`, and `sr-Latn`. An example structure is available in [docs/update-manifest.example.json](docs/update-manifest.example.json).
+6. Publish the GitHub release, check that the APK downloads publicly, and publish the manifest at the configured URL. If the manifest is a release asset, attach it to the draft before publishing. Test from an installed APK with a lower `versionCode` and the same signer.
+
+The updater accepts APK URLs on the manifest’s HTTPS origin and GitHub release asset URLs. If an APK is hosted separately, set `-PpocketFxUpdateApkOrigin` to its trusted HTTPS origin, such as `https://downloads.example.org`. GitHub’s managed release CDN redirects are accepted. The app verifies SHA-256, package name, and the exact newer version code before handing the file to Android. Android checks signing compatibility and asks the user to confirm. Where required, allow **Install unknown apps** for Pocket FX first.
+
+An APK signed by a different debug or release key may be refused as an upgrade. Use the original compatible key to keep an existing installation and its data. Android applies a compatible upgrade in place, preserving DataStore, cached rates, and Room history.
+
 ## Tests
 
 ```sh
@@ -64,5 +99,5 @@ For the 90-day EUR series ending November 18, Frankfurter rejected FOK, KID, and
 ./gradlew connectedDebugAndroidTest
 ```
 
-The JVM suite covers decimal calculations, input, source switching, historical statistics, and both providers’ HTTPS and cache behavior using MockWebServer and injectable clocks. Connected tests cover the Room migration, persisted history and preferences, Serbian Latin localization, drag reordering, long-press copying, source switching, History swaps, chart interactions, and offline states. Start an emulator or connect a device before running the connected tests. Tests use controlled data and run independently of the public rate endpoint.
+The JVM suite covers decimal calculations, input, source switching, historical statistics, and both providers’ HTTPS and cache behavior using MockWebServer and injectable clocks. Connected tests cover the Room migration, persisted history and preferences, localization, drag reordering, History swaps, offline calculator use, and the read-only installer handoff. JVM updater tests use HTTPS MockWebServer fixtures for version checks, download progress, cancellation, and verification. Start an emulator or connect a device before running the connected tests. Tests use controlled data and run independently of the public rate endpoint.
 # currency_converter

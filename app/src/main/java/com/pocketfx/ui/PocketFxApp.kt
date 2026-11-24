@@ -35,9 +35,11 @@ import com.pocketfx.ui.history.HistoryScreen
 import com.pocketfx.ui.settings.SettingsScreen
 import com.pocketfx.ui.theme.PocketTheme
 import com.pocketfx.ui.theme.useDarkTheme
+import com.pocketfx.ui.update.UpdateDialogs
+import com.pocketfx.ui.update.UpdateViewModel
 
 @Composable
-internal fun PocketFxApp(model: PocketFxViewModel, window: Window? = null) {
+internal fun PocketFxApp(model: PocketFxViewModel, window: Window? = null, updates: UpdateViewModel? = null) {
     val nav = rememberNavController()
     val prefs by model.preferences.collectAsStateWithLifecycle()
     val cache by model.cache.collectAsStateWithLifecycle()
@@ -103,10 +105,14 @@ internal fun PocketFxApp(model: PocketFxViewModel, window: Window? = null) {
                             )
                         }
                         composable("settings") {
-                            SettingsScreen(preferences, cache, refreshStatus, online, time, model) { nav.popBackStack() }
+                            SettingsScreen(preferences, cache, refreshStatus, online, time, model, updates) { nav.popBackStack() }
                         }
                     }
                 }
+            }
+            if (updates != null) {
+                val state by updates.state.collectAsStateWithLifecycle()
+                UpdateDialogs(state, updates)
             }
         }
     }

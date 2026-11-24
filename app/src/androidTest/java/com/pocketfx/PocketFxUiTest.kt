@@ -9,6 +9,7 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.click
@@ -105,6 +106,35 @@ class PocketFxUiTest {
         compose.onNodeWithTag("result-USD").assertTextEquals("25.62")
         compose.onNodeWithTag("result-RSD").assertTextEquals("2,562.50")
         compose.onNodeWithTag("result-RUB").assertTextEquals("2,360.06")
+    }
+
+    @Test fun offlineCalculatorAppliesPrecedenceWithoutRefreshingRates() {
+        show(connected = false)
+        val checks = conversionRequests.get()
+        compose.onNodeWithContentDescription("Calculator").performClick()
+        compose.onNodeWithTag("calculator-expression").assertTextEquals("100")
+        for (key in listOf("ADD", "TWO", "FIVE", "MULTIPLY", "TWO", "EQUALS")) {
+            compose.onNodeWithTag("calc-$key").performClick()
+        }
+        compose.onNodeWithTag("calculator-result").assertTextEquals("150")
+        compose.onNodeWithText("Apply to converter").performScrollTo().performClick()
+        compose.onNodeWithTag("source-amount").assertTextEquals("150")
+        compose.onNodeWithTag("result-USD").assertTextEquals("187.50")
+        assertEquals(checks, conversionRequests.get())
+        assertResultOrder("USD", "RSD", "RUB")
+    }
+
+    @Test fun closingCalculatorDiscardsTheDraftAndInvalidApplyIsDisabled() {
+        show()
+        compose.onNodeWithContentDescription("Calculator").performClick()
+        compose.onNodeWithTag("calc-DIVIDE").performClick()
+        compose.onNodeWithTag("calc-ZERO").performClick()
+        compose.onNodeWithTag("calc-EQUALS").performClick()
+        compose.onNodeWithText("Apply to converter").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Close calculator").performClick()
+        compose.onNodeWithTag("source-amount").assertTextEquals("100")
+        compose.onNodeWithContentDescription("Calculator").performClick()
+        compose.onNodeWithTag("calculator-expression").assertTextEquals("100")
     }
 
     @Test fun clearsAmountWithoutChangingCurrenciesOrRefreshingRates() {
@@ -402,6 +432,14 @@ class PocketFxUiTest {
     private fun period(label: String) = compose.onNodeWithTag("period-$label")
 
     private fun point(day: String, value: String) = HistoryPoint(LocalDate.parse(day), BigDecimal(value))
+
+    @Test fun settingsShowsAnExplicitlyDisabledCheckWhenNoFeedIsConfigured() {
+        show()
+        compose.onNodeWithContentDescription("Settings").performClick()
+        compose.onNodeWithText("Check for updates").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithText("This build has no update source. The project README explains how to configure one.")
+            .assertIsDisplayed()
+    }
 
     @Test fun opensSettingsAndSwitchesThemeAndLanguage() {
         show()

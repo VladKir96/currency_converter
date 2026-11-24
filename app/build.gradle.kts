@@ -1,10 +1,19 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import groovy.json.JsonOutput
+import java.net.URI
 
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
 }
+
+val updateManifestUrl = providers.gradleProperty("pocketFxUpdateManifestUrl").orElse("").get()
+val updateApkOrigin = providers.gradleProperty("pocketFxUpdateApkOrigin").orElse("").get()
+val updatesConfigured = runCatching { URI(updateManifestUrl) }.getOrNull()?.let {
+    it.scheme.equals("https", ignoreCase = true) && it.host != null && it.userInfo == null && it.fragment == null
+} == true
+val releaseKeyStore = providers.environmentVariable("POCKET_FX_KEYSTORE")
 
 android {
     namespace = "com.pocketfx"
@@ -14,11 +23,28 @@ android {
         applicationId = "com.pocketfx"
         minSdk = 26
         targetSdk = 37
-        versionCode = 3
-        versionName = "1.2.0"
+        versionCode = providers.gradleProperty("pocketFxVersionCode").map(String::toInt).getOrElse(4)
+        versionName = providers.gradleProperty("pocketFxVersionName").getOrElse("1.3.0")
+        buildConfigField("String", "UPDATE_MANIFEST_URL", JsonOutput.toJson(updateManifestUrl.takeIf { updatesConfigured }.orEmpty()))
+        buildConfigField("String", "UPDATE_APK_ORIGIN", JsonOutput.toJson(updateApkOrigin))
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    if (releaseKeyStore.isPresent) {
+        val distribution = signingConfigs.create("distribution") {
+            storeFile = file(releaseKeyStore.get())
+            storePassword = providers.environmentVariable("POCKET_FX_KEYSTORE_PASSWORD").get()
+            keyAlias = providers.environmentVariable("POCKET_FX_KEY_ALIAS").get()
+            keyPassword = providers.environmentVariable("POCKET_FX_KEY_PASSWORD").get()
+        }
+        buildTypes.named("release") { signingConfig = distribution }
+    }
+
+    if (updatesConfigured) {
+        for (buildType in listOf("debug", "release")) {
+            sourceSets[buildType].manifest.srcFile("src/updates/AndroidManifest.xml")
+        }
+    }
     sourceSets["androidTest"].assets.srcDir("schemas")
 
     buildFeatures {

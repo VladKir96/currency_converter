@@ -15,11 +15,22 @@ import com.pocketfx.data.remote.frankfurterApi
 import com.pocketfx.data.remote.networkConnected
 import com.pocketfx.data.repository.FrankfurterHistoryRepository
 import com.pocketfx.data.repository.OpenExchangeRateRepository
+import com.pocketfx.data.update.ApkInstaller
+import com.pocketfx.data.update.DataStoreUpdateChecks
+import com.pocketfx.data.update.UpdateHttp
+import com.pocketfx.data.update.UpdateRepository
+import com.pocketfx.data.update.UpdateSource
 import com.pocketfx.ui.PocketFxViewModel
+import com.pocketfx.ui.update.UpdateViewModel
 import java.time.Clock
 
 private val Application.preferences by preferencesDataStore(
     name = "pocket_fx_preferences",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
+)
+
+private val Application.updateChecks by preferencesDataStore(
+    name = "pocket_fx_updates",
     corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
 )
 
@@ -33,6 +44,17 @@ class PocketFxApplication : Application() {
     private val rates by lazy { OpenExchangeRateRepository(exchangeRatesApi(), RoomRateStore(database), clock) }
 
     private val history by lazy { FrankfurterHistoryRepository(frankfurterApi(), RoomHistoryStore(database.history()), clock) }
+
+    private val updateRepository by lazy {
+        val source = UpdateSource(BuildConfig.UPDATE_MANIFEST_URL, BuildConfig.UPDATE_APK_ORIGIN)
+        val platform = ApkInstaller(this)
+        UpdateRepository(
+            platform.installed(), source, UpdateHttp(source), DataStoreUpdateChecks(updateChecks),
+            cacheDir.resolve("app-updates"), platform::inspect, clock,
+        )
+    }
+
+    internal fun createUpdateViewModel() = UpdateViewModel(updateRepository)
 
     internal fun createViewModel() =
         PocketFxViewModel(UserPreferencesStore(preferences), rates, history, networkConnected(this), clock)

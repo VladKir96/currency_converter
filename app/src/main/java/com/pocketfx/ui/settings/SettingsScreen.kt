@@ -14,6 +14,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -21,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import com.pocketfx.BuildConfig
 import com.pocketfx.R
 import com.pocketfx.data.repository.RefreshStatus
+import com.pocketfx.data.update.AppVersion
 import com.pocketfx.domain.AppLanguage
 import com.pocketfx.domain.ThemeMode
 import com.pocketfx.domain.UserPreferences
@@ -33,6 +36,9 @@ import com.pocketfx.ui.components.PocketTopBar
 import com.pocketfx.ui.components.RateAttribution
 import com.pocketfx.ui.components.RateStatusPanel
 import com.pocketfx.ui.components.SectionHeading
+import com.pocketfx.ui.update.AppUpdatesPanel
+import com.pocketfx.ui.update.UpdateViewModel
+import com.pocketfx.ui.update.UpdatesUiState
 
 @Composable
 internal fun SettingsScreen(
@@ -42,6 +48,7 @@ internal fun SettingsScreen(
     online: Boolean,
     now: Long,
     model: PocketFxViewModel,
+    updates: UpdateViewModel?,
     onBack: () -> Unit,
 ) {
     Scaffold(
@@ -98,6 +105,14 @@ internal fun SettingsScreen(
                 item("rates_heading") { SectionHeading(stringResource(R.string.rate_data)) }
                 item("rates") {
                     RateStatusPanel(cache.data, status, cache.failed, online, now) { model.refresh(force = true) }
+                }
+                item("updates") {
+                    if (updates == null) {
+                        AppUpdatesPanel(UpdatesUiState(AppVersion(BuildConfig.APPLICATION_ID, BuildConfig.VERSION_CODE.toLong(), BuildConfig.VERSION_NAME), configured = false), null)
+                    } else {
+                        val state by updates.state.collectAsStateWithLifecycle()
+                        AppUpdatesPanel(state, updates)
+                    }
                 }
                 item("about") {
                     Panel {

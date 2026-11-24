@@ -100,4 +100,50 @@
     </plurals>
     <string name="period_short_days" translatable="false">%1$dD</string>
     <string name="period_short_years" translatable="false">%1$dY</string>
+    <string name="calculator">Calculator</string>
+    <string name="calculator_close">Close calculator</string>
+    <string name="calculator_apply">Apply to converter</string>
+    <string name="calculator_incomplete">Complete the expression before calculating.</string>
+    <string name="calculator_zero_division">Division by zero is undefined.</string>
+    <string name="calculator_too_long">The expression or number is too long.</string>
+    <string name="calculator_too_large">The result is outside the calculator’s range.</string>
+    <string name="calculator_negative">The converter requires a nonnegative amount.</string>
+    <string name="calculator_amount_limit">The converter accepts up to 12 integer digits.</string>
+    <string name="calculator_decimal">Decimal separator</string>
+    <string name="calculator_add">Add</string>
+    <string name="calculator_subtract">Subtract</string>
+    <string name="calculator_multiply">Multiply</string>
+    <string name="calculator_divide">Divide</string>
+    <string name="calculator_sign">Change sign</string>
+    <string name="calculator_clear">Clear calculator</string>
+    <string name="calculator_delete">Delete last character</string>
+    <string name="calculator_equals">Calculate result</string>
+    <string name="app_updates">App updates</string>
+    <string name="update_unconfigured">This build has no update source. The project README explains how to configure one.</string>
+    <string name="update_installed">Installed version · %1$s</string>
+    <string name="update_checked_at">Last successful check · %1$s</string>
+    <string name="update_check">Check for updates</string>
+    <string name="update_checking">Checking for updates…</string>
+    <string name="update_current">Up to date</string>
+    <string name="update_available">Update available</string>
+    <string name="update_available_version">Pocket FX %1$s is available.</string>
+    <string name="update_notes">Release notes</string>
+    <string name="update_later">Later</string>
+    <string name="update_download">Download update</string>
+    <string name="update_downloading">Downloading update…</string>
+    <string name="update_download_percent">Downloaded %1$s</string>
+    <string name="update_downloaded_size">Downloaded %1$s MB</string>
+    <string name="update_cancel_download">Cancel download</string>
+    <string name="update_ready">Ready to install</string>
+    <string name="update_install">Install update</string>
+    <string name="update_opening_installer">Opening Android installer…</string>
+    <string name="update_permission">Installation permission required</string>
+    <string name="update_permission_detail">In Android settings, allow Pocket FX to install apps from this source. Then return to App updates and tap Install update.</string>
+    <string name="update_allow_installation">Open Android settings</string>
+    <string name="update_failed">Update failed</string>
+    <string name="update_check_failed">Couldn’t check for updates. Try again.</string>
+    <string name="update_download_failed">Couldn’t download the update. Try again.</string>
+    <string name="update_verification_failed">The downloaded update failed verification.</string>
+    <string name="update_install_failed">Android couldn’t install the update.</string>
+    <string name="update_install_cancelled">Installation was canceled.</string>
 </resources>

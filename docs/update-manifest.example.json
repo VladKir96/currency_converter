@@ -1,0 +1,12 @@
+{
+  "versionCode": 5,
+  "versionName": "1.3.1",
+  "packageName": "com.pocketfx",
+  "apkUrl": "https://github.com/OWNER/REPOSITORY/releases/download/v1.3.1/pocket-fx-1.3.1.apk",
+  "sha256": "REPLACE_WITH_SHA256_OF_THE_SIGNED_APK",
+  "releaseNotes": {
+    "en": "Describe the release in English.",
+    "ru": "Опишите выпуск на русском языке.",
+    "sr-Latn": "Opišite izdanje na srpskom jeziku."
+  }
+}
