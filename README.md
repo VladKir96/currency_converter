@@ -61,42 +61,45 @@ On November 18, 2026, Frankfurter returned observations for all 12 directions am
 
 For the 90-day EUR series ending November 18, Frankfurter rejected FOK, KID, and TVD as invalid currency codes. It recognized BGN, CLF, HRK, SLL, and ZWL and returned no observations for that window. Pocket FX displays localized messages for both cases.
 
-## Publishing APK updates
+## APK releases and in-app updates
 
-Pocket FX checks a public HTTPS manifest on launch or foreground return when the previous successful check was at least 24 hours ago. **Settings → App updates** can check immediately. The default build has no update feed. Configure it when building the APK you distribute.
+Release builds use the stable [Pocket FX update manifest](https://github.com/VladKir96/currency_converter/releases/latest/download/update-manifest.json). The updater checks after 24 hours on launch or foreground return. To check immediately, open **Settings → App updates → Check for updates**. Android handles installation approval after Pocket FX verifies the APK’s SHA-256, package name, and newer version code.
 
-1. Choose a permanent manifest URL on GitHub Pages or another static HTTPS host. A stable GitHub release asset URL such as `https://github.com/OWNER/REPO/releases/latest/download/update-manifest.json` also works. Keep the URL stable so existing installations can find later versions.
-2. Set up a stable distribution signing key through Android Studio or provide `POCKET_FX_KEYSTORE`, `POCKET_FX_KEYSTORE_PASSWORD`, `POCKET_FX_KEY_ALIAS`, and `POCKET_FX_KEY_PASSWORD` in your shell or CI secret store. Keep the keystore outside the repository, back it up securely, and use the same signing identity for every release. [Android signing guide](https://developer.android.com/studio/publish/app-signing)
-3. Build the release with a higher integer `versionCode` than the previous release. Keep the application ID `com.pocketfx`. `versionName` is the label shown to users.
+### First-time setup
 
-   ```sh
-   ./gradlew assembleRelease \
-     -PpocketFxUpdateManifestUrl="$POCKET_FX_MANIFEST_URL" \
-     -PpocketFxVersionCode=5 -PpocketFxVersionName=1.3.1
-   ```
+```sh
+./scripts/setup-updates.sh
+```
 
-4. Verify the signed APK with `apksigner verify --print-certs app/build/outputs/apk/release/app-release.apk`. Create a draft GitHub release, choose its version tag, and upload the exact signed APK under a versioned name. [GitHub release guide](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository)
-5. Generate the metadata from the same bytes you uploaded. Set `POCKET_FX_APK_URL` to the public release asset URL and use the SDK’s `aapt` executable.
+Connect the existing Android installation with USB debugging authorized. Setup reads its version and signing certificate and tries to back up Room and DataStore using ADB `run-as`. The timestamped archive is stored outside Git in `~/Library/Application Support/Pocket FX/backups/`, or in `POCKET_FX_BACKUP_DIR` if set. Setup verifies the archive is readable and nonempty. Verify a restore on a disposable device before changing the signing identity on your phone. A non-debuggable build can block `run-as`.
 
-   ```sh
-   python3 scripts/generate_update_manifest.py \
-     app/build/outputs/apk/release/app-release.apk "$POCKET_FX_APK_URL" \
-     --aapt "$ANDROID_HOME/build-tools/36.0.0/aapt" \
-     --notes release-notes.json > update-manifest.json
-   ```
+Setup detects the GitHub repository from `origin`, then finds JDK and Android SDK tools from their environment variables, standard locations, or `~/Library/Application Support/Pocket FX/tools/`. It checks publishing access through GitHub CLI and can reuse the Mac’s Git credential helper for that command. If needed, sign in with `gh auth login --hostname github.com --web`.
 
-   Release notes are optional and may include `en`, `ru`, and `sr-Latn`. An example structure is available in [docs/update-manifest.example.json](docs/update-manifest.example.json).
-6. Publish the GitHub release, check that the APK downloads publicly, and publish the manifest at the configured URL. If the manifest is a release asset, attach it to the draft before publishing. Test from an installed APK with a lower `versionCode` and the same signer.
+For a connected app signed with the existing Android debug key, setup can build a non-debuggable release with that key and compare the certificates. To prepare a local test build without a connected phone, explicitly select `./scripts/setup-updates.sh --use-debug-key`. The `--install` option runs an in-place ADB upgrade only after the installed certificate matches and a usable backup has been verified.
 
-The updater accepts APK URLs on the manifest’s HTTPS origin and GitHub release asset URLs. If an APK is hosted separately, set `-PpocketFxUpdateApkOrigin` to its trusted HTTPS origin, such as `https://downloads.example.org`. GitHub’s managed release CDN redirects are accepted. The app verifies SHA-256, package name, and the exact newer version code before handing the file to Android. Android checks signing compatibility and asks the user to confirm. Where required, allow **Install unknown apps** for Pocket FX first.
+### Publish a release
 
-An APK signed by a different debug or release key may be refused as an upgrade. Use the original compatible key to keep an existing installation and its data. Android applies a compatible upgrade in place, preserving DataStore, cached rates, and Room history.
+Commit and push the intended source before running the release command. Use a new version name in `X.Y.Z` format.
+
+```sh
+./scripts/release.sh 1.4.0
+```
+
+The command picks a version code above the project, connected device, and published APKs. It signs and verifies the release, generates the manifest, uploads the two assets to a draft, and verifies the actual uploaded bytes before publishing. It then checks the public APK, versioned manifest, and stable manifest. Local assets are saved under `build/pocketfx-releases/v1.4.0/`. If a step stops after draft creation, inspect that draft before retrying.
+
+- Add `--notes /path/to/release-notes.json` to provide plain-text notes keyed by `en`, `ru`, and `sr-Latn`. A short localized message is supplied by default. [Manifest example](docs/update-manifest.example.json)
+- Add `--prepare-only` to build and verify local artifacts without publishing.
+- Use `--use-debug-key` for the first personal release if no compatible phone is connected and you’ve chosen to publish with that existing key. Later releases verify the key against the previously published APK.
+- For a dedicated release keystore, keep it outside Git and provide `POCKET_FX_KEYSTORE`, `POCKET_FX_KEYSTORE_PASSWORD`, `POCKET_FX_KEY_ALIAS`, and `POCKET_FX_KEY_PASSWORD` via a private shell profile or CI secret store. [Android signing guide](https://developer.android.com/studio/publish/app-signing)
+
+The Android debug key uses standard development credentials. Its use here is for personal distribution. Keep a private backup of the signing key and use the same identity for future upgrades. If the original key is lost or the installed app uses a different signer, leave that installation in place while arranging an app-level export and import with a compatible build or recovering the original key.
 
 ## Tests
 
 ```sh
 ./gradlew testDebugUnitTest lintDebug
 ./gradlew connectedDebugAndroidTest
+python3 -B -m unittest discover -s scripts/tests
 ```
 
 The JVM suite covers decimal calculations, input, source switching, historical statistics, and both providers’ HTTPS and cache behavior using MockWebServer and injectable clocks. Connected tests cover the Room migration, persisted history and preferences, localization, drag reordering, History swaps, offline calculator use, and the read-only installer handoff. JVM updater tests use HTTPS MockWebServer fixtures for version checks, download progress, cancellation, and verification. Start an emulator or connect a device before running the connected tests. Tests use controlled data and run independently of the public rate endpoint.

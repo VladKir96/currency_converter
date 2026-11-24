@@ -8,12 +8,15 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
-val updateManifestUrl = providers.gradleProperty("pocketFxUpdateManifestUrl").orElse("").get()
+val updateManifestOverride = providers.gradleProperty("pocketFxUpdateManifestUrl").orNull
 val updateApkOrigin = providers.gradleProperty("pocketFxUpdateApkOrigin").orElse("").get()
-val updatesConfigured = runCatching { URI(updateManifestUrl) }.getOrNull()?.let {
-    it.scheme.equals("https", ignoreCase = true) && it.host != null && it.userInfo == null && it.fragment == null
-} == true
+val stableManifest = "https://github.com/VladKir96/currency_converter/releases/latest/download/update-manifest.json"
 val releaseKeyStore = providers.environmentVariable("POCKET_FX_KEYSTORE")
+val reuseDebugSigning = providers.gradleProperty("pocketFxReuseDebugSigning").orNull == "true"
+
+fun validatedUpdateUrl(value: String): String = runCatching { URI(value) }.getOrNull()?.takeIf {
+    it.scheme.equals("https", ignoreCase = true) && it.host != null && it.userInfo == null && it.fragment == null
+}?.toString().orEmpty()
 
 android {
     namespace = "com.pocketfx"
@@ -23,13 +26,17 @@ android {
         applicationId = "com.pocketfx"
         minSdk = 26
         targetSdk = 37
-        versionCode = providers.gradleProperty("pocketFxVersionCode").map(String::toInt).getOrElse(4)
-        versionName = providers.gradleProperty("pocketFxVersionName").getOrElse("1.3.0")
-        buildConfigField("String", "UPDATE_MANIFEST_URL", JsonOutput.toJson(updateManifestUrl.takeIf { updatesConfigured }.orEmpty()))
+        versionCode = providers.gradleProperty("pocketFxVersionCode")
+            .orElse(providers.gradleProperty("pocketFxBaseVersionCode")).get().toInt()
+        versionName = providers.gradleProperty("pocketFxVersionName")
+            .orElse(providers.gradleProperty("pocketFxBaseVersionName")).get()
         buildConfigField("String", "UPDATE_APK_ORIGIN", JsonOutput.toJson(updateApkOrigin))
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    require(!reuseDebugSigning || !releaseKeyStore.isPresent) {
+        "Choose either an explicit release keystore or reuse of debug signing."
+    }
     if (releaseKeyStore.isPresent) {
         val distribution = signingConfigs.create("distribution") {
             storeFile = file(releaseKeyStore.get())
@@ -38,12 +45,17 @@ android {
             keyPassword = providers.environmentVariable("POCKET_FX_KEY_PASSWORD").get()
         }
         buildTypes.named("release") { signingConfig = distribution }
+    } else if (reuseDebugSigning) {
+        val androidUserHome = providers.environmentVariable("ANDROID_USER_HOME")
+            .getOrElse("${System.getProperty("user.home")}/.android")
+        require(file("$androidUserHome/debug.keystore").isFile) { "The existing debug keystore is required." }
+        buildTypes.named("release") { signingConfig = signingConfigs.getByName("debug") }
     }
 
-    if (updatesConfigured) {
-        for (buildType in listOf("debug", "release")) {
-            sourceSets[buildType].manifest.srcFile("src/updates/AndroidManifest.xml")
-        }
+    for ((buildType, defaultUrl) in mapOf("debug" to "", "release" to stableManifest)) {
+        val url = validatedUpdateUrl(updateManifestOverride ?: defaultUrl)
+        buildTypes.named(buildType) { buildConfigField("String", "UPDATE_MANIFEST_URL", JsonOutput.toJson(url)) }
+        if (url.isNotEmpty()) sourceSets[buildType].manifest.srcFile("src/updates/AndroidManifest.xml")
     }
     sourceSets["androidTest"].assets.srcDir("schemas")
 

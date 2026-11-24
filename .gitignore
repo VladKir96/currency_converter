@@ -9,3 +9,9 @@ local.properties
 *.keystore
 *.jks
 *.p12
+
+.pocketfx-signing/
+.pocketfx-release.env
+pocketfx-backups/
+release-notes.local.json
+__pycache__/
