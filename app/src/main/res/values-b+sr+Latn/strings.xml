@@ -18,6 +18,16 @@
     <string name="move_down">Pomeri nadole</string>
     <string name="no_targets">Dodajte valutu da biste videli rezultat konverzije.</string>
     <string name="no_rate">Kurs nije dostupan</string>
+    <string name="edit_exchange_rate">Izmeni kurs</string>
+    <string name="exchange_rate">Devizni kurs</string>
+    <string name="custom_rate">Ručni kurs</string>
+    <string name="api_rate_reference">API kurs: %1$s %2$s</string>
+    <string name="api_rate_unavailable">API kurs nije dostupan</string>
+    <string name="reset_api_rate">Vrati na API kurs</string>
+    <string name="reset_currency_rate">Vrati %1$s na API kurs</string>
+    <string name="save_rate">Sačuvaj kurs</string>
+    <string name="invalid_exchange_rate">Nevažeći kurs</string>
+    <string name="cancel">Otkaži</string>
     <string name="pair_rate">1 %1$s = %2$s %3$s</string>
     <string name="copy_amount">Kopiraj iznos</string>
     <string name="copied">Iznos je kopiran</string>

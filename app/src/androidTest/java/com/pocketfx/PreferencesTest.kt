@@ -6,8 +6,11 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.pocketfx.data.preferences.CustomRatesStore
 import com.pocketfx.data.preferences.UserPreferencesStore
 import com.pocketfx.domain.AppLanguage
+import com.pocketfx.domain.CurrencyPair
+import com.pocketfx.domain.CustomExchangeRate
 import com.pocketfx.domain.ThemeMode
 import com.pocketfx.domain.UserPreferences
 import com.pocketfx.domain.withSource
@@ -23,6 +26,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.math.BigDecimal
 import java.time.LocalDate
 import java.util.UUID
 
@@ -96,6 +100,55 @@ class PreferencesTest {
         } finally {
             writer.cancelAndJoin()
             reader.cancelAndJoin()
+            file.delete()
+        }
+        Unit
+    }
+
+    @Test fun customRatesSurviveReopeningDataStoreAlongsideExistingPreferences() = runBlocking {
+        val file = File(context.cacheDir, "prefs-${UUID.randomUUID()}.preferences_pb")
+        val initialScope = Job()
+        val writer = Job()
+        val reader = Job()
+        val restoredScope = Job()
+        val rsd = CustomExchangeRate("EUR", "RSD", BigDecimal("117.123456789123456789"))
+        val rub = CustomExchangeRate("EUR", "RUB", BigDecimal("105.00"))
+        val existing = UserPreferences(
+            sourceAmount = "42.5",
+            targets = listOf("RUB", "RSD"),
+            favorites = listOf("JPY"),
+            theme = ThemeMode.DARK,
+            language = AppLanguage.SERBIAN_LATIN,
+        )
+        try {
+            UserPreferencesStore(store(file, initialScope)).update { existing }
+            initialScope.cancelAndJoin()
+
+            val dataStore = store(file, writer)
+            val rates = CustomRatesStore(dataStore)
+            assertEquals(emptyMap<CurrencyPair, CustomExchangeRate>(), rates.values.first())
+            rates.save(rsd)
+            rates.save(rub)
+            writer.cancelAndJoin()
+
+            val reopened = store(file, reader)
+            val reopenedRates = CustomRatesStore(reopened)
+            assertEquals(existing, UserPreferencesStore(reopened).values.first())
+            assertEquals(mapOf(rsd.pair to rsd, rub.pair to rub), reopenedRates.values.first())
+            val reversed = CustomExchangeRate("RSD", "EUR", BigDecimal("0.0085"))
+            reopenedRates.save(reversed)
+            assertEquals(mapOf(rsd.pair to reversed, rub.pair to rub), reopenedRates.values.first())
+            reopenedRates.reset(CurrencyPair.of("RSD", "EUR"))
+            reader.cancelAndJoin()
+
+            val restored = store(file, restoredScope)
+            assertEquals(mapOf(rub.pair to rub), CustomRatesStore(restored).values.first())
+            assertEquals(existing, UserPreferencesStore(restored).values.first())
+        } finally {
+            initialScope.cancelAndJoin()
+            writer.cancelAndJoin()
+            reader.cancelAndJoin()
+            restoredScope.cancelAndJoin()
             file.delete()
         }
         Unit

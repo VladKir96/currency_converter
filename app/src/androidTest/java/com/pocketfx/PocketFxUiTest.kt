@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
@@ -35,6 +36,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.pocketfx.data.preferences.CustomRatesStore
 import com.pocketfx.data.preferences.UserPreferencesStore
 import com.pocketfx.data.repository.ExchangeRateRepository
 import com.pocketfx.data.repository.HistoricalRatesRepository
@@ -86,6 +88,7 @@ class PocketFxUiTest {
     private lateinit var file: File
     private lateinit var preferenceStore: UserPreferencesStore
     private val conversionRequests = AtomicInteger()
+    private val apiRates = MutableStateFlow<CachedRates?>(null)
     private val rates = mapOf("USD" to "1", "EUR" to "0.8", "RSD" to "100", "RUB" to "92.1", "JPY" to "140", "GBP" to "0.5")
         .mapValues { it.value.toBigDecimal() }
     private val snapshot = RateSnapshot("test", "USD", clock.millis() - 1000, clock.millis(), rates)
@@ -106,6 +109,104 @@ class PocketFxUiTest {
         compose.onNodeWithTag("result-USD").assertTextEquals("25.62")
         compose.onNodeWithTag("result-RSD").assertTextEquals("2,562.50")
         compose.onNodeWithTag("result-RUB").assertTextEquals("2,360.06")
+    }
+
+    @Test fun customRateEditorValidatesCancelsSavesAndResetsToTheRefreshedApiRate() {
+        show()
+        waitForText("12,500.00")
+        val checks = conversionRequests.get()
+
+        compose.onNodeWithTag("edit-RSD").performTouchInput { click() }
+        compose.onNodeWithText("Edit exchange rate").assertIsDisplayed()
+        assertRateInput("125")
+        compose.onNodeWithTag("api-rate-reference").assertTextEquals("API rate: 125 RSD")
+        val input = compose.onNodeWithTag("custom-rate-input")
+        for (invalid in listOf("0", "-1", "1.2.3", "1000000000000000001")) {
+            input.performTextReplacement(invalid)
+            compose.onNodeWithText("Save rate").assertIsNotEnabled()
+        }
+        input.performTextReplacement("118")
+        compose.onNodeWithText("Cancel").performClick()
+        compose.onNodeWithTag("result-RSD").assertTextEquals("12,500.00")
+
+        compose.onNodeWithTag("result-RSD").performTouchInput { click() }
+        input.performTextReplacement("117,50")
+        compose.onNodeWithText("Save rate").performClick()
+        waitForText("11,750.00")
+        compose.onNodeWithContentDescription("Custom rate").assertIsDisplayed()
+
+        compose.onNodeWithTag("edit-RSD").performClick()
+        assertRateInput("117.50")
+        assertRateSelection("117.50")
+        apiRates.value = cached.copy(snapshot = snapshot.copy(rates = rates + ("RSD" to BigDecimal("101"))))
+        waitForText("API rate: 126.25 RSD")
+        assertRateInput("117.50")
+        compose.onNodeWithText("Cancel").performClick()
+        compose.onNodeWithTag("result-RSD").assertTextEquals("11,750.00")
+
+        compose.onNodeWithContentDescription("Reset RSD to API rate").performTouchInput { click() }
+        waitForText("12,625.00")
+        compose.onNodeWithText("Edit exchange rate").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Custom rate").assertDoesNotExist()
+        assertEquals(checks, conversionRequests.get())
+    }
+
+    @Test fun offlineOverridesSurviveRemovingATargetAndCanBeEditedAndResetInReverse() {
+        show(initial = null, connected = false)
+        val checks = conversionRequests.get()
+        compose.onNodeWithTag("edit-RSD").performClick()
+        assertRateInput("")
+        compose.onNodeWithTag("api-rate-reference").assertTextEquals("API rate unavailable")
+        compose.onNodeWithText("Save rate").assertIsNotEnabled()
+        compose.onNodeWithTag("custom-rate-input").performTextReplacement("117.50")
+        compose.onNodeWithText("Save rate").performClick()
+        waitForText("11,750.00")
+
+        compose.onNodeWithContentDescription("Options for RSD").performTouchInput { click() }
+        compose.onNodeWithText("Remove currency").performClick()
+        waitForTargets(listOf("USD", "RUB"))
+        scrollConverterTo("Add currency")
+        compose.onNodeWithText("Add currency").performClick()
+        pick("RSD").performScrollTo().performClick()
+        compose.onNodeWithText("Done").performClick()
+        waitForText("11,750.00")
+
+        compose.onNodeWithTag("source-picker").performScrollTo().performClick()
+        pick("RSD").performScrollTo().performClick()
+        waitForText("0.851")
+        compose.onNodeWithTag("result-EUR").assertTextEquals("0.851")
+        compose.onNodeWithTag("edit-EUR").performScrollTo().performClick()
+        assertRateInput("0.008510638297872340425531914893617021")
+        compose.onNodeWithTag("custom-rate-input").performTextReplacement("0,01")
+        compose.onNodeWithText("Save rate").performClick()
+        waitForText("1.00")
+
+        compose.onNodeWithTag("source-picker").performScrollTo().performClick()
+        pick("EUR").performScrollTo().performClick()
+        waitForText("10,000.00")
+        compose.onNodeWithTag("edit-RSD").performScrollTo().performClick()
+        compose.onNodeWithText("Reset to API rate").performScrollTo().performClick()
+        compose.waitUntil(5000) {
+            compose.onAllNodesWithText("—").fetchSemanticsNodes().count {
+                it.config.getOrElse(SemanticsProperties.TestTag) { "" } == "result-RSD"
+            } == 1
+        }
+        compose.onNodeWithContentDescription("Reset RSD to API rate").assertDoesNotExist()
+        compose.onNodeWithTag("source-picker").performScrollTo().performClick()
+        pick("RSD").performScrollTo().performClick()
+        waitForTag("result-EUR")
+        compose.onNodeWithTag("result-EUR").assertTextEquals("—")
+        assertEquals(checks, conversionRequests.get())
+    }
+
+    private fun assertRateInput(expected: String) {
+        compose.onNodeWithTag("custom-rate-input")
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString(expected)))
+    }
+
+    private fun assertRateSelection(expected: String) {
+        compose.onNodeWithTag("custom-rate-input")
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.TextSelectionRange, TextRange(0, expected.length)))
     }
 
     @Test fun offlineCalculatorAppliesPrecedenceWithoutRefreshingRates() {
@@ -404,6 +505,10 @@ class PocketFxUiTest {
 
     @Test fun serbianLatinLocalizesScreensCurrencyNamesAndNumbersInDarkAndLight() {
         show(history = listOf(point("2026-11-17", "1.2"), point("2026-11-18", "1.25")))
+        compose.onNodeWithTag("edit-USD").performClick()
+        compose.onNodeWithTag("custom-rate-input").performTextReplacement("1.3")
+        compose.onNodeWithText("Save rate").performClick()
+        waitForText("130.00")
         compose.onNodeWithContentDescription("Settings").performClick()
         compose.onNodeWithText("Srpski").performClick()
         waitForText("Podešavanja")
@@ -412,6 +517,14 @@ class PocketFxUiTest {
         compose.onNodeWithContentDescription("Nazad").performClick()
         waitForText("Šaljete")
         compose.onNodeWithTag("result-RSD").assertTextEquals("12.500,00")
+        compose.onNodeWithTag("result-USD").assertTextEquals("130,00")
+        compose.onNodeWithContentDescription("Ručni kurs").assertIsDisplayed()
+        compose.onNodeWithTag("edit-USD").performClick()
+        waitForText("Izmeni kurs")
+        compose.onNodeWithText("Izmeni kurs").assertIsDisplayed()
+        assertRateInput("1,3")
+        compose.onNodeWithTag("api-rate-reference").assertTextEquals("API kurs: 1,25 USD")
+        compose.onNodeWithText("Otkaži").performClick()
         compose.onNodeWithContentDescription("Obriši iznos").assertIsDisplayed()
         compose.onNodeWithText("evro", ignoreCase = true).assertIsDisplayed()
         compose.onNodeWithContentDescription("Istorija").performClick()
@@ -425,6 +538,9 @@ class PocketFxUiTest {
             compose.onAllNodesWithText("Svetla").fetchSemanticsNodes()
                 .any { it.config.getOrElse(SemanticsProperties.Selected) { false } }
         }
+        compose.onNodeWithContentDescription("Nazad").performClick()
+        waitForText("130,00")
+        compose.onNodeWithContentDescription("Podešavanja").performClick()
         compose.onNodeWithText("English").performClick()
         waitForText("Settings")
     }
@@ -459,6 +575,11 @@ class PocketFxUiTest {
         compose.onNodeWithContentDescription("Назад").performClick()
         waitForText("Вы отправляете")
         compose.onNodeWithTag("result-USD").assertTextEquals("125,00")
+        compose.onNodeWithTag("edit-USD").performClick()
+        waitForText("Изменить курс")
+        compose.onNodeWithText("Изменить курс").assertIsDisplayed()
+        assertRateInput("1,25")
+        compose.onNodeWithText("Отмена").performClick()
     }
 
     @Test fun showsOfflineStatusWhileConvertingWithCachedRates() {
@@ -490,8 +611,9 @@ class PocketFxUiTest {
         )
         preferenceStore = UserPreferencesStore(dataStore)
         if (prefs != UserPreferences()) runBlocking { preferenceStore.update { prefs } }
+        apiRates.value = initial
         val repository = object : ExchangeRateRepository {
-            override val latest = flowOf(initial)
+            override val latest = apiRates
             override val status = MutableStateFlow(RefreshStatus(problem = if (connected) null else RateProblem.OFFLINE))
             override suspend fun refresh(force: Boolean) {
                 conversionRequests.incrementAndGet()
@@ -504,7 +626,7 @@ class PocketFxUiTest {
         }
         val factory = viewModelFactory {
             initializer {
-                PocketFxViewModel(preferenceStore, repository, historyRepository, flowOf(connected), clock)
+                PocketFxViewModel(preferenceStore, CustomRatesStore(dataStore), repository, historyRepository, flowOf(connected), clock)
             }
         }
         val model = ViewModelProvider.create(models, factory)[PocketFxViewModel::class]

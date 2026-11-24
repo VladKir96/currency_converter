@@ -18,6 +18,16 @@
     <string name="move_down">Переместить вниз</string>
     <string name="no_targets">Добавьте валюту, чтобы увидеть результат.</string>
     <string name="no_rate">Курс недоступен</string>
+    <string name="edit_exchange_rate">Изменить курс</string>
+    <string name="exchange_rate">Обменный курс</string>
+    <string name="custom_rate">Ручной курс</string>
+    <string name="api_rate_reference">Курс API: %1$s %2$s</string>
+    <string name="api_rate_unavailable">Курс API недоступен</string>
+    <string name="reset_api_rate">Сбросить до курса API</string>
+    <string name="reset_currency_rate">Сбросить курс %1$s до курса API</string>
+    <string name="save_rate">Сохранить курс</string>
+    <string name="invalid_exchange_rate">Некорректный курс</string>
+    <string name="cancel">Отмена</string>
     <string name="pair_rate">1 %1$s = %2$s %3$s</string>
     <string name="copy_amount">Скопировать сумму</string>
     <string name="copied">Сумма скопирована</string>

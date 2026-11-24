@@ -9,6 +9,7 @@ import com.pocketfx.data.local.MigrateRates1To2
 import com.pocketfx.data.local.RateDatabase
 import com.pocketfx.data.local.RoomHistoryStore
 import com.pocketfx.data.local.RoomRateStore
+import com.pocketfx.data.preferences.CustomRatesStore
 import com.pocketfx.data.preferences.UserPreferencesStore
 import com.pocketfx.data.remote.exchangeRatesApi
 import com.pocketfx.data.remote.frankfurterApi
@@ -57,5 +58,5 @@ class PocketFxApplication : Application() {
     internal fun createUpdateViewModel() = UpdateViewModel(updateRepository)
 
     internal fun createViewModel() =
-        PocketFxViewModel(UserPreferencesStore(preferences), rates, history, networkConnected(this), clock)
+        PocketFxViewModel(UserPreferencesStore(preferences), CustomRatesStore(preferences), rates, history, networkConnected(this), clock)
 }

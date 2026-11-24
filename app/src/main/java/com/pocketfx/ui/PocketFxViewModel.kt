@@ -2,18 +2,24 @@ package com.pocketfx.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.pocketfx.data.preferences.CustomRatesStore
 import com.pocketfx.data.preferences.UserPreferencesStore
 import com.pocketfx.data.repository.ExchangeRateRepository
 import com.pocketfx.data.repository.HistoricalRatesRepository
 import com.pocketfx.domain.AppLanguage
 import com.pocketfx.domain.CachedRates
+import com.pocketfx.domain.CurrencyPair
+import com.pocketfx.domain.CustomExchangeRate
 import com.pocketfx.domain.HistoryQuery
+import com.pocketfx.domain.ResolvedExchangeRate
 import com.pocketfx.domain.ThemeMode
 import com.pocketfx.domain.UserPreferences
 import com.pocketfx.domain.calculator.CalculatorKey
 import com.pocketfx.domain.calculator.CalculatorState
 import com.pocketfx.domain.isCurrencyCode
 import com.pocketfx.domain.normalizeAmount
+import com.pocketfx.domain.parseCustomRate
+import com.pocketfx.domain.resolveExchangeRate
 import com.pocketfx.domain.withSource
 import com.pocketfx.domain.withTargetOrder
 import kotlinx.coroutines.CancellationException
@@ -25,6 +31,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
@@ -39,8 +47,11 @@ internal data class RateCacheState(
     val failed: Boolean = false,
 )
 
+internal data class ConverterRates(val source: String, val targets: Map<String, ResolvedExchangeRate>)
+
 internal class PocketFxViewModel(
     private val preferenceStore: UserPreferencesStore,
+    private val customRateStore: CustomRatesStore,
     private val rates: ExchangeRateRepository,
     private val historicalRates: HistoricalRatesRepository,
     connected: Flow<Boolean>,
@@ -51,12 +62,21 @@ internal class PocketFxViewModel(
 
     private val preferenceState = MutableStateFlow<UserPreferences?>(null)
     private val cacheState = MutableStateFlow(RateCacheState())
+    private val customRates = MutableStateFlow<Map<CurrencyPair, CustomExchangeRate>>(emptyMap())
     private val preferenceReadError = MutableStateFlow(false)
     private val preferenceWriteError = MutableStateFlow(false)
-    private val preferenceChanges = Channel<(UserPreferences) -> UserPreferences>(Channel.UNLIMITED)
+    private val preferenceChanges = Channel<suspend () -> Unit>(Channel.UNLIMITED)
 
     val preferences = preferenceState.asStateFlow()
     val cache = cacheState.asStateFlow()
+    private val converterSelection = preferences.map { it?.let { prefs -> prefs.sourceCurrency to prefs.targets } }
+        .distinctUntilChanged()
+    private val apiRates = cache.map { it.data?.snapshot?.rates.orEmpty() }.distinctUntilChanged()
+    val converterRates = combine(converterSelection, apiRates, customRates) { selection, snapshot, overrides ->
+        selection?.let { (source, targets) ->
+            ConverterRates(source, targets.associateWith { resolveExchangeRate(source, it, snapshot, overrides) })
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
     val settingsReadFailed = preferenceReadError.asStateFlow()
     val settingsWriteFailed = preferenceWriteError.asStateFlow()
     val refreshStatus = rates.status
@@ -76,11 +96,12 @@ internal class PocketFxViewModel(
 
     init {
         viewModelScope.launch {
-            observeWithRetry({ preferenceStore.values }, onError = {
+            observeWithRetry({ combine(preferenceStore.values, customRateStore.values, ::Pair) }, onError = {
                 preferenceReadError.value = true
                 if (preferenceState.value == null) preferenceState.value = UserPreferences()
-            }) {
-                preferenceState.value = it
+            }) { (prefs, overrides) ->
+                customRates.value = overrides
+                preferenceState.value = prefs
                 preferenceReadError.value = false
             }
         }
@@ -94,7 +115,7 @@ internal class PocketFxViewModel(
         viewModelScope.launch {
             for (change in preferenceChanges) {
                 try {
-                    preferenceStore.update(change)
+                    change()
                     preferenceWriteError.value = false
                 } catch (error: CancellationException) {
                     throw error
@@ -163,8 +184,19 @@ internal class PocketFxViewModel(
     fun setTheme(theme: ThemeMode) = edit { it.copy(theme = theme) }
     fun setLanguage(language: AppLanguage) = edit { it.copy(language = language) }
 
+    fun saveCustomRate(source: String, target: String, input: String) {
+        val rate = parseCustomRate(input) ?: return
+        if (!isCurrencyCode(source) || !isCurrencyCode(target) || source == target) return
+        preferenceChanges.trySend { customRateStore.save(CustomExchangeRate(source, target, rate)) }
+    }
+
+    fun resetCustomRate(source: String, target: String) {
+        if (!isCurrencyCode(source) || !isCurrencyCode(target) || source == target) return
+        preferenceChanges.trySend { customRateStore.reset(CurrencyPair.of(source, target)) }
+    }
+
     private fun edit(transform: (UserPreferences) -> UserPreferences) {
-        preferenceChanges.trySend(transform)
+        preferenceChanges.trySend { preferenceStore.update(transform) }
     }
 
     private suspend fun <T> observeWithRetry(

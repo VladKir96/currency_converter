@@ -31,8 +31,13 @@ private fun adaptiveDigits(value: BigDecimal, standardDigits: Int): Int {
 internal fun BigDecimal.asMoney(locale: Locale): String =
     decimalFormat(locale, 2, adaptiveDigits(this, 2)).format(this)
 
-internal fun BigDecimal.asRate(locale: Locale): String =
-    decimalFormat(locale, 0, adaptiveDigits(this, 6)).format(this)
+internal fun BigDecimal.asRate(locale: Locale, fractionDigits: Int = 6): String =
+    decimalFormat(locale, 0, adaptiveDigits(this, fractionDigits)).format(this)
+
+internal fun BigDecimal.asRateInput(locale: Locale): String {
+    val digits = scale().coerceAtLeast(0)
+    return decimalFormat(locale, digits, digits).apply { isGroupingUsed = false }.format(this)
+}
 
 internal fun BigDecimal.asPercent(locale: Locale): String =
     (NumberFormat.getPercentInstance(locale) as DecimalFormat).apply {

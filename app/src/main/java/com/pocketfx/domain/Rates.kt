@@ -22,13 +22,15 @@ data class CachedRates(
 
 private val AmountPattern = Regex("[0-9]{0,12}(\\.[0-9]{0,6})?")
 private val CurrencyCodePattern = Regex("[A-Z]{3}")
-private val ConversionPrecision = MathContext.DECIMAL128
+internal val RatePrecision: MathContext = MathContext.DECIMAL128
 
 fun isCurrencyCode(value: String): Boolean = CurrencyCodePattern.matches(value)
 
 /** Returns canonical input, including empty text and a trailing decimal separator while editing. */
-fun normalizeAmount(input: String): String? {
-    val canonical = buildString(input.length) {
+fun normalizeAmount(input: String): String? = canonicalDecimal(input)?.takeIf(AmountPattern::matches)
+
+internal fun canonicalDecimal(input: String): String? =
+    buildString(input.length) {
         input.forEach { char ->
             when (char) {
                 '.', ',' -> append('.')
@@ -39,22 +41,24 @@ fun normalizeAmount(input: String): String? {
             }
         }
     }
-    return canonical.takeIf(AmountPattern::matches)
-}
 
 fun parseAmount(input: String): BigDecimal? = normalizeAmount(input)?.toBigDecimalOrNull()
 
-fun convert(
-    amount: BigDecimal,
+internal data class ApiCrossRate(private val from: BigDecimal, private val to: BigDecimal) {
+    val value: BigDecimal = to.divide(from, RatePrecision)
+
+    // Apply the USD factors before rounding, so a repeating cross-rate cannot move a money rounding tie.
+    fun convert(amount: BigDecimal): BigDecimal = amount.multiply(to).divide(from, RatePrecision)
+}
+
+internal fun apiCrossRate(
     source: String,
     target: String,
     usdRates: Map<String, BigDecimal>,
-): BigDecimal? {
-    if (amount.signum() < 0) return null
+): ApiCrossRate? {
     val from = usdRates[source]?.takeIf { it.signum() > 0 } ?: return null
     val to = usdRates[target]?.takeIf { it.signum() > 0 } ?: return null
-    if (source == target) return amount
-    return amount.multiply(to).divide(from, ConversionPrecision)
+    return ApiCrossRate(from, to)
 }
 
 fun isCacheFresh(lastCheckedAt: Long?, now: Long): Boolean =

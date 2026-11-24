@@ -18,6 +18,16 @@
     <string name="move_down">Move down</string>
     <string name="no_targets">Add a currency to see a conversion.</string>
     <string name="no_rate">Rate unavailable</string>
+    <string name="edit_exchange_rate">Edit exchange rate</string>
+    <string name="exchange_rate">Exchange rate</string>
+    <string name="custom_rate">Custom rate</string>
+    <string name="api_rate_reference">API rate: %1$s %2$s</string>
+    <string name="api_rate_unavailable">API rate unavailable</string>
+    <string name="reset_api_rate">Reset to API rate</string>
+    <string name="reset_currency_rate">Reset %1$s to API rate</string>
+    <string name="save_rate">Save rate</string>
+    <string name="invalid_exchange_rate">Invalid exchange rate</string>
+    <string name="cancel">Cancel</string>
     <string name="pair_rate">1 %1$s = %2$s %3$s</string>
     <string name="copy_amount">Copy amount</string>
     <string name="copied">Amount copied</string>

@@ -1,11 +1,11 @@
 package com.pocketfx
 
 import com.pocketfx.domain.HistoryPoint
-import com.pocketfx.domain.convert
 import com.pocketfx.domain.historyStats
 import com.pocketfx.domain.isCacheFresh
 import com.pocketfx.domain.normalizeAmount
 import com.pocketfx.domain.parseAmount
+import com.pocketfx.domain.resolveExchangeRate
 import com.pocketfx.ui.components.asMoney
 import com.pocketfx.ui.components.asRate
 import org.junit.Assert.assertEquals
@@ -29,6 +29,12 @@ class RateMathTest {
     @Test fun zeroAmount() = assertConversion("0", "EUR", "RSD", "0")
     @Test fun crossRate() = assertConversion("800", "RSD", "EUR", "6.4")
 
+    @Test fun repeatingApiRateDoesNotShiftExactHalfEvenRoundingTies() {
+        val dataset = mapOf("EUR" to BigDecimal("3"), "USD" to BigDecimal.ONE)
+        val amount = requireNotNull(resolve("EUR", "USD", dataset).convert(BigDecimal("15.045")))
+        assertEquals("5.02", amount.asMoney(Locale.US))
+    }
+
     @Test fun keepsDecimalPrecision() {
         val precise = rates + ("EUR" to "0.123456789123456789".toBigDecimal())
         assertConversion("123456789123.123456", "USD", "EUR", "15241578780.63252629373373152834278", precise)
@@ -46,14 +52,14 @@ class RateMathTest {
         assertEquals("42.", normalizeAmount("42,"))
         assertEquals(BigDecimal("1.23"), parseAmount("١,٢٣"))
         assertEquals(BigDecimal("123456789012.123456"), parseAmount("123456789012.123456"))
-        assertNull(convert(BigDecimal("-2"), "EUR", "USD", rates))
+        assertNull(resolve("EUR", "USD").convert(BigDecimal("-2")))
     }
 
     @Test fun rejectsMissingOrNonPositiveRates() {
-        assertNull(convert(BigDecimal.ONE, "EUR", "JPY", rates))
-        assertNull(convert(BigDecimal.ONE, "JPY", "JPY", rates))
-        assertNull(convert(BigDecimal.ONE, "EUR", "USD", rates + ("EUR" to BigDecimal.ZERO)))
-        assertNull(convert(BigDecimal.ONE, "USD", "EUR", rates + ("EUR" to BigDecimal.ONE.negate())))
+        assertNull(resolve("EUR", "JPY").effectiveRate)
+        assertNull(resolve("JPY", "JPY").effectiveRate)
+        assertNull(resolve("EUR", "USD", rates + ("EUR" to BigDecimal.ZERO)).effectiveRate)
+        assertNull(resolve("USD", "EUR", rates + ("EUR" to BigDecimal.ONE.negate())).effectiveRate)
     }
 
     @Test fun computesHistoryExtremesAndChange() {
@@ -86,7 +92,10 @@ class RateMathTest {
         expected: String,
         dataset: Map<String, BigDecimal> = rates,
     ) {
-        val actual = requireNotNull(convert(amount.toBigDecimal(), from, to, dataset))
+        val actual = requireNotNull(resolve(from, to, dataset).convert(amount.toBigDecimal()))
         assertEquals(expected, 0, actual.compareTo(expected.toBigDecimal()))
     }
+
+    private fun resolve(from: String, to: String, dataset: Map<String, BigDecimal> = rates) =
+        resolveExchangeRate(from, to, dataset, emptyMap())
 }

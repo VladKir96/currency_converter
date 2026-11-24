@@ -3,7 +3,8 @@ package com.pocketfx.ui.converter
 import android.content.ClipData
 import android.os.Build
 import android.widget.Toast
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -27,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
@@ -61,7 +64,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
@@ -73,7 +75,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
@@ -91,8 +92,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pocketfx.R
 import com.pocketfx.data.repository.RefreshStatus
 import com.pocketfx.domain.DefaultCurrencies
+import com.pocketfx.domain.ResolvedExchangeRate
 import com.pocketfx.domain.UserPreferences
-import com.pocketfx.domain.convert
 import com.pocketfx.domain.normalizeAmount
 import com.pocketfx.domain.parseAmount
 import com.pocketfx.ui.PocketFxViewModel
@@ -136,10 +137,13 @@ internal fun ConverterScreen(
         else rates.keys.toList()
     }
     var picker by rememberSaveable { mutableStateOf<Picker?>(null) }
+    var editedTarget by rememberSaveable(prefs.sourceCurrency) { mutableStateOf<String?>(null) }
     var input by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(prefs.sourceAmount))
     }
     val calculator by model.calculator.collectAsStateWithLifecycle()
+    val converterRates by model.converterRates.collectAsStateWithLifecycle()
+    val targetRates = converterRates?.takeIf { it.source == prefs.sourceCurrency }?.targets.orEmpty()
     val amount = remember(input.text) { parseAmount(input.text) }
     val refresh = { model.refresh(force = true) }
     val focus = LocalFocusManager.current
@@ -241,25 +245,30 @@ internal fun ConverterScreen(
                         bottomStart = if (last) 22.dp else 0.dp,
                         bottomEnd = if (last) 22.dp else 0.dp,
                     )
-                    val currentRate = convert(BigDecimal.ONE, prefs.sourceCurrency, code, rates)
-                    val result = amount?.let { convert(it, prefs.sourceCurrency, code, rates) }
+                    val exchangeRate = targetRates[code]
+                    val result = amount?.let { exchangeRate?.convert(it) }
                     Surface(
                         modifier = placement.fillMaxWidth().testTag(targetKey(code)),
                         shape = shape,
                         color = if (dragging) MaterialTheme.colorScheme.surfaceContainerHigh else MaterialTheme.colorScheme.surface,
                         shadowElevation = if (dragging) 5.dp else 0.dp,
                     ) {
-                        Column(Modifier.padding(horizontal = 10.dp)) {
+                        Column(Modifier.padding(horizontal = 4.dp)) {
                             if (!first) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                             ResultRow(
                                 info = currencyInfo(code, locale),
                                 source = prefs.sourceCurrency,
                                 value = result,
-                                rate = currentRate,
-                                showRateUnavailable = cache.data != null,
+                                rate = exchangeRate,
+                                showRateUnavailable = cache.loaded,
                                 canDrag = displayed.size > 1,
                                 canMoveUp = !first,
                                 canMoveDown = !last,
+                                onEdit = {
+                                    focus.clearFocus()
+                                    editedTarget = code
+                                },
+                                onReset = { model.resetCustomRate(prefs.sourceCurrency, code) },
                                 onMove = {
                                     reorder.clearPreview()
                                     model.moveTarget(code, it)
@@ -311,6 +320,17 @@ internal fun ConverterScreen(
                 item("attribution") { RateAttribution(Modifier.padding(top = 14.dp)) }
             }
         }
+    }
+
+    editedTarget?.takeIf { it in prefs.targets }?.let { code ->
+        ExchangeRateEditor(
+            source = prefs.sourceCurrency,
+            target = code,
+            rate = targetRates[code],
+            onSave = { model.saveCustomRate(prefs.sourceCurrency, code, it) },
+            onReset = { model.resetCustomRate(prefs.sourceCurrency, code) },
+            onClose = { editedTarget = null },
+        )
     }
 
     calculator?.let { state ->
@@ -423,11 +443,13 @@ private fun ResultRow(
     info: CurrencyInfo,
     source: String,
     value: BigDecimal?,
-    rate: BigDecimal?,
+    rate: ResolvedExchangeRate?,
     showRateUnavailable: Boolean,
     canDrag: Boolean,
     canMoveUp: Boolean,
     canMoveDown: Boolean,
+    onEdit: () -> Unit,
+    onReset: () -> Unit,
     onMove: (Int) -> Unit,
     onRemove: () -> Unit,
 ) {
@@ -436,6 +458,7 @@ private fun ResultRow(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val copyLabel = stringResource(R.string.copy_amount)
+    val editLabel = stringResource(R.string.edit_exchange_rate)
     val copied = stringResource(R.string.copied)
     val display = value?.asMoney(locale) ?: stringResource(R.string.unknown)
     val copy: () -> Unit = {
@@ -444,48 +467,83 @@ private fun ResultRow(
             if (Build.VERSION.SDK_INT < 33) Toast.makeText(context, copied, Toast.LENGTH_SHORT).show()
         }
     }
+    val effectiveRate = rate?.effectiveRate
+    val isCustom = rate?.isCustom == true
     var menuOpen by remember { mutableStateOf(false) }
     Row(
         Modifier.fillMaxWidth().padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(9.dp),
     ) {
         if (canDrag) {
-            Icon(
-                painterResource(R.drawable.ic_drag_handle),
-                stringResource(R.string.reorder_currency, info.code),
-                Modifier.size(18.dp).testTag("drag-${info.code}"),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        CurrencyMark(info.symbol)
-        Column(Modifier.weight(1f)) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            Box(
+                Modifier.width(48.dp).heightIn(min = 48.dp).testTag("drag-${info.code}"),
+                contentAlignment = Alignment.Center,
             ) {
-                Text(info.code, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                val copyModifier = if (value == null) Modifier else Modifier
-                    .pointerInput(display, copyLabel) { detectTapGestures(onLongPress = { copy() }) }
-                    .semantics {
-                        onLongClick(copyLabel) {
-                            copy()
-                            true
-                        }
-                    }
-                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
-                    Text(
-                        display,
-                        copyModifier.testTag("result-${info.code}"),
-                        textAlign = TextAlign.End,
-                        style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum"),
-                        fontWeight = FontWeight.SemiBold,
+                Icon(
+                    painterResource(R.drawable.ic_drag_handle),
+                    stringResource(R.string.reorder_currency, info.code),
+                    Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Row(
+            Modifier.weight(1f).heightIn(min = 48.dp)
+                .clickable(onClickLabel = editLabel, onClick = onEdit)
+                .testTag("edit-${info.code}"),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CurrencyMark(info.symbol)
+            Column(Modifier.weight(1f)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(info.code, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    val copyModifier = Modifier.combinedClickable(
+                        onClickLabel = editLabel,
+                        onClick = onEdit,
+                        onLongClickLabel = copyLabel,
+                        onLongClick = copy.takeIf { value != null },
                     )
+                    val amountStyle = if (isCustom) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                        Text(
+                            display,
+                            copyModifier.testTag("result-${info.code}"),
+                            textAlign = TextAlign.End,
+                            style = amountStyle.copy(fontFeatureSettings = "tnum"),
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+                if (effectiveRate != null) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (isCustom) {
+                            Icon(
+                                Icons.Default.Edit,
+                                stringResource(R.string.custom_rate),
+                                Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                        val formatted = effectiveRate.asRate(locale, if (isCustom) 12 else 6)
+                        MutedText(stringResource(R.string.pair_rate, source, formatted, info.code))
+                    }
+                } else if (showRateUnavailable) {
+                    MutedText(stringResource(R.string.no_rate))
                 }
             }
-            if (rate != null) MutedText(stringResource(R.string.pair_rate, source, rate.asRate(locale), info.code))
-            else if (showRateUnavailable) MutedText(stringResource(R.string.no_rate))
+        }
+        if (isCustom) {
+            IconButton(onClick = onReset) {
+                Icon(painterResource(R.drawable.ic_restore), stringResource(R.string.reset_currency_rate, info.code))
+            }
         }
         Box {
             IconButton(onClick = { menuOpen = true }) {
