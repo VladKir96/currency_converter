@@ -17,9 +17,15 @@ On Windows, use `gradlew.bat` in place of `./gradlew`. The Gradle wrapper pins G
 
 ## Using the converter
 
-The first launch uses English, the system theme, and 100 EUR converted to USD, RSD, and RUB. Tap the X beside the amount to clear it. When you change the source currency, the previous source takes the new source’s place in the target list or is appended if the new source was outside that list. Use **Add currency** to choose targets. Hold a target row or its drag handle, then drag it up or down to reorder. Hold it near the top or bottom of the screen to scroll while dragging. **Move up**, **Move down**, and removal are also available in the row menu. Star a currency in the picker to add it to favorites. Long-press a converted amount to copy its displayed value.
+The first launch uses English, the system theme, and 100 EUR converted to USD, RSD, and RUB. Tap the X beside the amount to clear it. When you change the source currency, the previous source takes the new source’s place in the target list or is appended if the new source was outside that list. Use **Add currency** to choose targets. Hold a target’s drag handle, then drag it up or down to reorder. Hold it near the top or bottom of the screen to scroll while dragging. **Move up**, **Move down**, and removal are also available in the row menu. Star a currency in the picker to add it to favorites. Long-press a converted amount to copy its displayed value.
 
 Settings offers English, Russian, and Serbian Latin, along with the system, light, and dark themes. Settings also shows data freshness and lets you request a refresh. Your choices and amount are restored when you reopen the app.
+
+### Custom exchange rates
+
+Tap a target row to edit the rate from the current source currency. The editor selects the effective rate for replacement and shows the latest downloaded API rate when available. Enter a decimal using a point or comma and tap **Save rate**. Rates from 0.000000000000000001 to 1,000,000,000,000,000,000 are accepted with up to 52 fractional digits.
+
+A pencil marks an active custom rate. Pocket FX applies the reciprocal when you reverse the pair, and editing either direction updates that same pair. Overrides survive closing the app, API refreshes, and removing targets. Use the restore icon on the row or **Reset to API rate** in the editor to clear the override in both directions. Editing and resetting work offline. Reset uses the latest cached API rate, or shows **Rate unavailable** when there is no cached rate for the pair. History continues to show Frankfurter observations.
 
 ### Calculator
 
@@ -30,7 +36,7 @@ Tap the calculator icon beside the source amount to start with that value. The k
 - Jetpack Compose and Material 3 render the Converter, History, and Settings destinations. The ViewModel exposes state using StateFlow.
 - Retrofit and OkHttp fetch the current USD-based dataset and historical series over HTTPS. Separate repositories validate and cache each provider’s responses.
 - Domain functions use BigDecimal for amounts, cross-rates, and history statistics. Editing the amount uses the rates already on the device.
-- Room stores the latest conversion dataset and Frankfurter history in separate tables, with decimal values encoded as strings. Preferences DataStore stores the amount, currency selections and order, favorites, theme, and language.
+- Room stores the latest conversion dataset and Frankfurter history in separate tables, with decimal values encoded as strings. Preferences DataStore stores the amount, currency selections and order, favorites, theme, and language. Each custom rate uses one atomic entry keyed by the unordered currency pair, with its entered direction and exact decimal string. Reciprocals use 34 significant digits with half-even rounding.
 
 ## Exchange rate data
 
@@ -102,5 +108,5 @@ The Android debug key uses standard development credentials. Its use here is for
 python3 -B -m unittest discover -s scripts/tests
 ```
 
-The JVM suite covers decimal calculations, input, source switching, historical statistics, and both providers’ HTTPS and cache behavior using MockWebServer and injectable clocks. Connected tests cover the Room migration, persisted history and preferences, localization, drag reordering, History swaps, offline calculator use, and the read-only installer handoff. JVM updater tests use HTTPS MockWebServer fixtures for version checks, download progress, cancellation, and verification. Start an emulator or connect a device before running the connected tests. Tests use controlled data and run independently of the public rate endpoint.
+The JVM suite covers decimal calculations, input, reciprocal custom rates, source switching, historical statistics, and both providers’ HTTPS and cache behavior using MockWebServer and injectable clocks. Connected tests cover the Room migration, persisted history, preferences and overrides, offline rate editing and reset, cache refreshes while the editor is open, localization, drag reordering, History swaps, offline calculator use, and the read-only installer handoff. JVM updater tests use HTTPS MockWebServer fixtures for version checks, download progress, cancellation, and verification. Start an emulator or connect a device before running the connected tests. Tests use controlled data and run independently of the public rate endpoint.
 # currency_converter
