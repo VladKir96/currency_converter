@@ -8,7 +8,7 @@ import java.math.RoundingMode
 
 internal enum class CalculatorKey(val symbol: String) {
     ZERO("0"), ONE("1"), TWO("2"), THREE("3"), FOUR("4"), FIVE("5"),
-    SIX("6"), SEVEN("7"), EIGHT("8"), NINE("9"), DECIMAL("."),
+    SIX("6"), SEVEN("7"), EIGHT("8"), NINE("9"), TRIPLE_ZERO("000"), DECIMAL("."),
     ADD("+"), SUBTRACT("−"), MULTIPLY("×"), DIVIDE("÷"),
     SIGN("±"), CLEAR("C"), BACKSPACE("⌫"), EQUALS("=");
 
@@ -29,14 +29,14 @@ internal class CalculatorState private constructor(
     private val evaluated: Boolean = false,
     private val inputError: CalculatorError? = null,
 ) {
-    val expression: String = buildString {
+    fun expression(formatOperand: (String) -> String): String = buildString {
         terms.forEach {
-            append(it.number)
+            append(formatOperand(it.number))
             append(' ')
             append(it.following.symbol)
             append(' ')
         }
-        append(entry.orEmpty())
+        entry?.let { append(formatOperand(it)) }
     }.trimEnd()
 
     private val calculation = evaluate(terms, entry)
@@ -62,6 +62,8 @@ internal class CalculatorState private constructor(
             if (entry == null && terms.isNotEmpty()) CalculatorState(terms.dropLast(1), terms.last().number)
             else editEntry { value -> value.orEmpty().dropLast(1).takeUnless { it.isEmpty() || it == "-" } ?: "0" }
         }
+        key == CalculatorKey.TRIPLE_ZERO ->
+            appendDigit(CalculatorKey.ZERO).appendDigit(CalculatorKey.ZERO).appendDigit(CalculatorKey.ZERO)
         else -> appendDigit(key)
     }
 

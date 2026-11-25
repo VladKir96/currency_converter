@@ -23,8 +23,12 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.clearText
+import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -54,6 +58,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -76,15 +81,9 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.OffsetMapping
-import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.text.input.TransformedText
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
@@ -113,9 +112,11 @@ import com.pocketfx.ui.components.SectionHeading
 import com.pocketfx.ui.components.asMoney
 import com.pocketfx.ui.components.asRate
 import com.pocketfx.ui.components.currencyInfo
+import com.pocketfx.ui.components.groupedOutput
+import com.pocketfx.ui.components.numericInput
+import com.pocketfx.ui.components.rememberNumericTextFormat
 import kotlinx.coroutines.launch
 import java.math.BigDecimal
-import java.text.DecimalFormatSymbols
 
 private enum class Picker { SOURCE, TARGETS }
 
@@ -138,13 +139,11 @@ internal fun ConverterScreen(
     }
     var picker by rememberSaveable { mutableStateOf<Picker?>(null) }
     var editedTarget by rememberSaveable(prefs.sourceCurrency) { mutableStateOf<String?>(null) }
-    var input by rememberSaveable(stateSaver = TextFieldValue.Saver) {
-        mutableStateOf(TextFieldValue(prefs.sourceAmount))
-    }
+    val input = rememberTextFieldState(prefs.sourceAmount)
     val calculator by model.calculator.collectAsStateWithLifecycle()
     val converterRates by model.converterRates.collectAsStateWithLifecycle()
     val targetRates = converterRates?.takeIf { it.source == prefs.sourceCurrency }?.targets.orEmpty()
-    val amount = remember(input.text) { parseAmount(input.text) }
+    val amount = remember(input.text) { parseAmount(input.text.toString()) }
     val refresh = { model.refresh(force = true) }
     val focus = LocalFocusManager.current
 
@@ -156,6 +155,15 @@ internal fun ConverterScreen(
     val writeFailed by model.settingsWriteFailed.collectAsStateWithLifecycle()
     val edgeSize = with(LocalDensity.current) { 76.dp.toPx() }
 
+    LaunchedEffect(input, model) {
+        var lastAmount = prefs.sourceAmount
+        snapshotFlow { input.text.toString() }.collect { text ->
+            if (text != lastAmount) {
+                lastAmount = text
+                model.setAmount(text)
+            }
+        }
+    }
     LaunchedEffect(prefs.targets, writeFailed) { reorder.reconcile(prefs.targets, writeFailed) }
     LaunchedEffect(reorder.draggedCode, edgeSize) {
         if (reorder.draggedCode == null) return@LaunchedEffect
@@ -201,21 +209,14 @@ internal fun ConverterScreen(
                     Box(Modifier.padding(bottom = 14.dp)) {
                         SourcePanel(
                             info = currencyInfo(prefs.sourceCurrency, locale),
-                            value = input,
-                            onValue = { edited ->
-                                normalizeAmount(edited.text)?.let { canonical ->
-                                    val changed = input.text != canonical
-                                    input = edited.copy(text = canonical)
-                                    if (changed) model.setAmount(canonical)
-                                }
-                            },
+                            input = input,
                             onPick = {
                                 focus.clearFocus()
                                 picker = Picker.SOURCE
                             },
                             onCalculator = {
                                 focus.clearFocus()
-                                model.openCalculator(input.text)
+                                model.openCalculator(input.text.toString())
                             },
                         )
                     }
@@ -336,7 +337,7 @@ internal fun ConverterScreen(
     calculator?.let { state ->
         CalculatorBottomSheet(
             state, model::calculatorKey,
-            onApply = { model.applyCalculator()?.let { input = TextFieldValue(it, TextRange(it.length)) } },
+            onApply = { model.applyCalculator()?.let(input::setTextAndPlaceCursorAtEnd) },
             onClose = model::closeCalculator,
         )
     }
@@ -363,24 +364,19 @@ internal fun ConverterScreen(
 @Composable
 private fun SourcePanel(
     info: CurrencyInfo,
-    value: TextFieldValue,
-    onValue: (TextFieldValue) -> Unit,
+    input: TextFieldState,
     onPick: () -> Unit,
     onCalculator: () -> Unit,
 ) {
     val palette = MaterialTheme.colorScheme
     val focus = LocalFocusManager.current
-    val locale = LocalAppLocale.current
     val inputLabel = stringResource(R.string.source_amount)
     val currencyLabel = stringResource(R.string.source_currency)
     val amountFocus = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
-    val symbols = remember(locale) { DecimalFormatSymbols.getInstance(locale) }
-    val transformation = remember(symbols) {
-        VisualTransformation { text ->
-            TransformedText(AnnotatedString(text.text.replace('.', symbols.decimalSeparator)), OffsetMapping.Identity)
-        }
-    }
+    val numbers = rememberNumericTextFormat()
+    val numericInput = remember(numbers) { numbers.numericInput { normalizeAmount(it) != null } }
+    val groupedOutput = remember(numbers) { numbers.groupedOutput() }
     Panel(highlight = true) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -399,8 +395,9 @@ private fun SourcePanel(
             }
         }
         BasicTextField(
-            value = value,
-            onValueChange = onValue,
+            state = input,
+            inputTransformation = numericInput,
+            outputTransformation = groupedOutput,
             modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp).focusRequester(amountFocus)
                 .semantics { contentDescription = inputLabel }.testTag("source-amount"),
             textStyle = MaterialTheme.typography.displaySmall.copy(
@@ -408,20 +405,19 @@ private fun SourcePanel(
                 fontWeight = FontWeight.SemiBold,
                 fontFeatureSettings = "tnum",
             ),
-            singleLine = true,
-            visualTransformation = transformation,
+            lineLimits = TextFieldLineLimits.SingleLine,
             cursorBrush = SolidColor(palette.primary),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = { focus.clearFocus() }),
-            decorationBox = { field ->
+            onKeyboardAction = { focus.clearFocus() },
+            decorator = { field ->
                 Row(
                     Modifier.fillMaxWidth().heightIn(min = 48.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Box(Modifier.weight(1f)) { field() }
-                    if (value.text.isNotEmpty()) {
+                    if (input.text.isNotEmpty()) {
                         IconButton(onClick = {
-                            onValue(TextFieldValue(""))
+                            input.clearText()
                             amountFocus.requestFocus()
                             keyboard?.show()
                         }) {

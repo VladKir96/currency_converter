@@ -5,9 +5,11 @@ import com.pocketfx.domain.calculator.CalculatorKey
 import com.pocketfx.domain.calculator.CalculatorKey.*
 import com.pocketfx.domain.calculator.CalculatorState
 import com.pocketfx.domain.calculator.calculatorText
+import com.pocketfx.ui.components.NumericTextFormat
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import java.util.Locale
 
 class CalculatorTest {
     @Test fun appliesPrecedenceAndAssociativity() {
@@ -52,6 +54,35 @@ class CalculatorTest {
         assertResult("137", "9", ADD, ONE, EQUALS, NINE)
         assertResult("0", "0.1", DECIMAL, DECIMAL, ONE)
         assertResult("invalid amount", "0")
+    }
+
+    @Test fun tripleZeroUsesTheSameOperandRulesAsIndividualZeros() {
+        assertResult("1", "1000", TRIPLE_ZERO)
+        assertResult("25", "25000", TRIPLE_ZERO)
+        assertResult("0", "0", TRIPLE_ZERO)
+        assertResult("0", "0", SIGN, TRIPLE_ZERO)
+        assertEquals("0.2000", press("0.2", TRIPLE_ZERO).expression { it })
+        assertEquals("100 + 0", press("100", ADD, TRIPLE_ZERO).expression { it })
+        assertEquals("100 + 5000", press("100", ADD, FIVE, TRIPLE_ZERO).expression { it })
+        assertResult("12", "1200", TRIPLE_ZERO, BACKSPACE)
+        assertResult("2", "0", ADD, ONE, EQUALS, TRIPLE_ZERO)
+
+        val nearLimit = press("", *List(32) { NINE }.toTypedArray())
+        val individual = nearLimit.press(ZERO).press(ZERO).press(ZERO)
+        val triple = nearLimit.press(TRIPLE_ZERO)
+        assertEquals(CalculatorError.TOO_LONG, triple.error)
+        assertEquals(individual.expression { it }, triple.expression { it })
+        assertEquals(individual.result, triple.result)
+    }
+
+    @Test fun formatsIndividualOperandsAndNegativeResultsWithoutChangingArithmetic() {
+        val numbers = NumericTextFormat(Locale.US)
+        val grouped = press("125000", ADD, THREE, FIVE, TRIPLE_ZERO, MULTIPLY, TWO)
+        assertEquals("125,000 + 35,000 × 2", grouped.expression(numbers::format))
+        assertEquals("195000", grouped.amount)
+        val negative = press("125000.5", SIGN)
+        assertEquals("-125,000.5", negative.expression(numbers::format))
+        assertEquals("-125,000.5", numbers.format(requireNotNull(negative.result).calculatorText()))
     }
 
     @Test fun limitsInputAndRejectsAnAmountBeyondConverterPrecision() {

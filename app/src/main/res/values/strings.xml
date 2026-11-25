@@ -120,6 +120,7 @@
     <string name="calculator_negative">The converter requires a nonnegative amount.</string>
     <string name="calculator_amount_limit">The converter accepts up to 12 integer digits.</string>
     <string name="calculator_decimal">Decimal separator</string>
+    <string name="calculator_triple_zero">Triple zero</string>
     <string name="calculator_add">Add</string>
     <string name="calculator_subtract">Subtract</string>
     <string name="calculator_multiply">Multiply</string>

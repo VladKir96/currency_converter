@@ -3,7 +3,7 @@ package com.pocketfx
 import com.pocketfx.domain.CustomExchangeRate
 import com.pocketfx.domain.parseCustomRate
 import com.pocketfx.domain.resolveExchangeRate
-import com.pocketfx.ui.components.asRateInput
+import com.pocketfx.ui.components.NumericTextFormat
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -59,10 +59,10 @@ class CustomExchangeRateTest {
     }
 
     @Test fun precisionAndLocalizedSeparatorsSurviveEditingAndConversion() {
-        val locale = Locale.forLanguageTag("sr-Latn-RS")
+        val numbers = NumericTextFormat(Locale.forLanguageTag("sr-Latn-RS"))
         val input = "0,123456789123456789123456789123456789"
         val rate = requireNotNull(parseCustomRate(input))
-        assertEquals(input, rate.asRateInput(locale))
+        assertEquals(input, numbers.format(rate.toPlainString()))
         val custom = CustomExchangeRate("EUR", "RSD", rate)
         val result = resolveExchangeRate("EUR", "RSD", api, mapOf(custom.pair to custom)).convert(BigDecimal("100"))
         assertEquals(BigDecimal("12.345678912345678912345678912345678900"), result)
@@ -70,7 +70,7 @@ class CustomExchangeRateTest {
 
         val nearLimit = CustomExchangeRate("EUR", "USD", BigDecimal("999999999999999999"))
         val reciprocal = nearLimit.from("USD")
-        assertEquals(reciprocal, parseCustomRate(reciprocal.asRateInput(locale)))
+        assertEquals(reciprocal, parseCustomRate(numbers.format(reciprocal.toPlainString())))
     }
 
     @Test fun invalidRatesCannotBeSaved() {

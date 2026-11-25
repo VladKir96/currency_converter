@@ -4,8 +4,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
@@ -13,28 +14,29 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.pocketfx.R
 import com.pocketfx.domain.ResolvedExchangeRate
+import com.pocketfx.domain.normalizeCustomRate
 import com.pocketfx.domain.parseCustomRate
 import com.pocketfx.ui.components.LocalAppLocale
 import com.pocketfx.ui.components.MutedText
 import com.pocketfx.ui.components.asRate
-import com.pocketfx.ui.components.asRateInput
+import com.pocketfx.ui.components.groupedOutput
+import com.pocketfx.ui.components.numericInput
+import com.pocketfx.ui.components.rememberNumericTextFormat
+import kotlinx.coroutines.flow.first
 
 @Composable
 internal fun ExchangeRateEditor(
@@ -56,40 +58,46 @@ internal fun ExchangeRateEditor(
         stringResource(R.string.api_rate_reference, it.asRate(locale, 12), target)
     } ?: stringResource(R.string.api_rate_unavailable)
     val fieldFocus = remember { FocusRequester() }
-    var input by rememberSaveable(source, target, stateSaver = TextFieldValue.Saver) {
-        val initial = rate?.effectiveRate?.asRateInput(locale).orEmpty()
-        mutableStateOf(TextFieldValue(initial, TextRange(0, initial.length)))
-    }
-    val parsed = remember(input.text) { parseCustomRate(input.text) }
-    val invalid = parsed == null && input.text.isNotEmpty()
+    val initial = rate?.effectiveRate?.toPlainString().orEmpty()
+    val input = rememberTextFieldState(initial, TextRange(0, initial.length))
+    val numbers = rememberNumericTextFormat()
+    val numericInput = remember(numbers) { numbers.numericInput { normalizeCustomRate(it) != null } }
+    val groupedOutput = remember(numbers) { numbers.groupedOutput() }
+    val text = input.text.toString()
+    val parsed = remember(text) { parseCustomRate(text) }
+    val invalid = parsed == null && text.isNotEmpty()
     val save = {
         if (parsed != null) {
             // Saving an unchanged reciprocal keeps the original, exact value.
-            if (rate?.customRate?.compareTo(parsed) != 0) onSave(input.text)
+            if (rate?.customRate?.compareTo(parsed) != 0) onSave(text)
             onClose()
         }
     }
-    LaunchedEffect(fieldFocus) { fieldFocus.requestFocus() }
-
     AlertDialog(
         onDismissRequest = onClose,
         title = { Text(title) },
         text = {
+            val window = LocalWindowInfo.current
+            LaunchedEffect(window, fieldFocus) {
+                snapshotFlow { window.isWindowFocused }.first { it }
+                fieldFocus.requestFocus()
+            }
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
-                    value = input,
-                    onValueChange = { input = it },
+                    state = input,
+                    inputTransformation = numericInput,
+                    outputTransformation = groupedOutput,
                     modifier = Modifier.fillMaxWidth().focusRequester(fieldFocus).testTag("custom-rate-input"),
                     label = { Text(rateLabel) },
                     prefix = { Text("1 $source =") },
                     suffix = { Text(target) },
-                    singleLine = true,
+                    lineLimits = TextFieldLineLimits.SingleLine,
                     isError = invalid,
                     supportingText = if (invalid) {
                         { Text(invalidRate) }
                     } else null,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { save() }),
+                    onKeyboardAction = { save() },
                 )
                 MutedText(apiReference, Modifier.testTag("api-rate-reference"))
                 if (rate?.isCustom == true) {

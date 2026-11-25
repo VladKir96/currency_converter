@@ -34,11 +34,6 @@ internal fun BigDecimal.asMoney(locale: Locale): String =
 internal fun BigDecimal.asRate(locale: Locale, fractionDigits: Int = 6): String =
     decimalFormat(locale, 0, adaptiveDigits(this, fractionDigits)).format(this)
 
-internal fun BigDecimal.asRateInput(locale: Locale): String {
-    val digits = scale().coerceAtLeast(0)
-    return decimalFormat(locale, digits, digits).apply { isGroupingUsed = false }.format(this)
-}
-
 internal fun BigDecimal.asPercent(locale: Locale): String =
     (NumberFormat.getPercentInstance(locale) as DecimalFormat).apply {
         maximumFractionDigits = 2

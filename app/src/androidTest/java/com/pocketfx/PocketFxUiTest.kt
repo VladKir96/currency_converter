@@ -1,12 +1,16 @@
 package com.pocketfx
 
+import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
@@ -23,12 +27,15 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextInputSelection
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.pressKey
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
@@ -44,6 +51,7 @@ import com.pocketfx.data.repository.HistoryProblem
 import com.pocketfx.data.repository.HistoryState
 import com.pocketfx.data.repository.RateProblem
 import com.pocketfx.data.repository.RefreshStatus
+import com.pocketfx.domain.AppLanguage
 import com.pocketfx.domain.CachedRates
 import com.pocketfx.domain.HistoryPeriod
 import com.pocketfx.domain.HistoryPoint
@@ -80,6 +88,7 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(AndroidJUnit4::class)
+@OptIn(ExperimentalTestApi::class)
 class PocketFxUiTest {
     @get:Rule val compose = createComposeRule()
     private val models = ViewModelStore()
@@ -111,6 +120,136 @@ class PocketFxUiTest {
         compose.onNodeWithTag("result-RUB").assertTextEquals("2,360.06")
     }
 
+    @Test fun nativeClipboardPasteHandlesFormattedValuesAndKeepsTheCursorInTheMiddle() {
+        show(connected = false)
+        val field = compose.onNodeWithTag("source-amount").performClick()
+        val checks = conversionRequests.get()
+        for ((clipboard, displayed) in listOf("1000" to "1,000", "1000.50" to "1,000.50", "1.234,50" to "1,234.50")) {
+            field.pasteOverAll(clipboard)
+            field.assertEditableText(displayed)
+        }
+        field.performTextInputSelection(TextRange(4), relativeToOriginalText = false)
+        setClipboard("9")
+        field.shortcut(Key.V)
+        field.assertEditableText("12,394.50")
+        field.assert(SemanticsMatcher.expectValue(SemanticsProperties.TextSelectionRange, TextRange(5)))
+        field.performKeyInput { pressKey(Key.Backspace) }
+        field.assertEditableText("1,234.50")
+        field.assert(SemanticsMatcher.expectValue(SemanticsProperties.TextSelectionRange, TextRange(4)))
+
+        field.pasteOverAll("2.50")
+        field.performTextInputSelection(TextRange(1), relativeToOriginalText = false)
+        setClipboard("1\u202f000")
+        field.shortcut(Key.V)
+        field.assertEditableText("21,000.50")
+        field.assert(SemanticsMatcher.expectValue(SemanticsProperties.TextSelectionRange, TextRange(6)))
+        field.pasteOverAll("1,23,456")
+        field.assertEditableText("21,000.50")
+        field.pasteOverAll("1234567890123")
+        field.assertEditableText("21,000.50")
+        compose.onNodeWithTag("result-USD").assertTextEquals("26,250.62")
+        waitForStoredAmount("21000.50")
+        assertEquals(checks, conversionRequests.get())
+    }
+
+    @Test fun amountCopiedFromConverterPastesBackAndGroupedEditsPreserveTrailingZeros() {
+        show()
+        waitForText("12,500.00")
+        compose.onNodeWithTag("result-RSD").performTouchInput { longClick() }
+        val field = compose.onNodeWithTag("source-amount").performClick()
+        field.shortcut(Key.A)
+        field.shortcut(Key.V)
+        field.assertEditableText("12,500.00")
+        waitForStoredAmount("12500.00")
+        field.pasteOverAll("1000.")
+        field.assertEditableText("1,000.")
+        field.performTextInput("00")
+        field.assertEditableText("1,000.00")
+        waitForStoredAmount("1000.00")
+    }
+
+    @Test fun pasteInRussianAcceptsBothKindsOfNonbreakingSpace() {
+        show(prefs = UserPreferences(language = AppLanguage.RUSSIAN))
+        val field = compose.onNodeWithTag("source-amount").performClick()
+        for (sample in listOf("1\u00a0234\u00a0567,89", "1\u202f234\u202f567,89")) {
+            field.pasteOverAll(sample)
+            val displayed = field.fetchSemanticsNode().config[SemanticsProperties.EditableText].text
+            assertEquals("1 234 567,89", displayed.replace('\u00a0', ' ').replace('\u202f', ' '))
+        }
+        waitForStoredAmount("1234567.89")
+    }
+
+    @Test fun nativeCopyCutAndPasteRoundTripTheSerbianDecimalFormat() {
+        show(prefs = UserPreferences(language = AppLanguage.SERBIAN_LATIN, sourceAmount = "1.234"))
+        val field = compose.onNodeWithTag("source-amount").performClick()
+        field.assertEditableText("1,234")
+        field.shortcut(Key.A)
+        field.shortcut(Key.C)
+        assertEquals("1,234", compose.runOnIdle { clipboard().primaryClip?.getItemAt(0)?.text?.toString() })
+        field.shortcut(Key.A)
+        field.shortcut(Key.X)
+        field.assertEditableText("")
+        field.shortcut(Key.V)
+        field.assertEditableText("1,234")
+        waitForStoredAmount("1.234")
+        field.pasteOverAll("1.234.567,89")
+        field.assertEditableText("1.234.567,89")
+        waitForStoredAmount("1234567.89")
+
+        compose.onNodeWithContentDescription("Kalkulator").performClick()
+        compose.onNodeWithContentDescription("Tri nule").assertIsDisplayed()
+        compose.onNodeWithTag("calculator-expression").assertTextEquals("1.234.567,89")
+        compose.onNodeWithContentDescription("Zatvori kalkulator").performClick()
+        compose.onNodeWithContentDescription("Podešavanja").performClick()
+        compose.onNodeWithText("English").performClick()
+        waitForText("Settings")
+        compose.onNodeWithContentDescription("Back").performClick()
+        field.assertEditableText("1,234,567.89")
+        waitForStoredAmount("1234567.89")
+    }
+
+    @Test fun pastingAForeignFormattedCustomRatePreservesEveryFractionalDigit() {
+        show(connected = false)
+        val checks = conversionRequests.get()
+        compose.onNodeWithTag("edit-RSD").performClick()
+        val field = compose.onNodeWithTag("custom-rate-input")
+        compose.waitUntil(5000) { field.fetchSemanticsNode().config.getOrElse(SemanticsProperties.Focused) { false } }
+        field.pasteOverAll("1.234,567890123456")
+        assertRateInput("1,234.567890123456")
+        field.pasteOverAll("1.2.3")
+        assertRateInput("1,234.567890123456")
+        compose.onNodeWithText("Save rate").performClick()
+        waitForText("123,456.79")
+        compose.onNodeWithTag("edit-RSD").performClick()
+        assertRateInput("1,234.567890123456")
+        assertEquals(checks, conversionRequests.get())
+    }
+
+    private fun clipboard() = ApplicationProvider.getApplicationContext<Context>().getSystemService(ClipboardManager::class.java)
+
+    private fun setClipboard(value: String) {
+        compose.runOnIdle { clipboard().setPrimaryClip(ClipData.newPlainText("number", value)) }
+    }
+
+    private fun SemanticsNodeInteraction.shortcut(key: Key) = performKeyInput {
+        keyDown(Key.CtrlLeft)
+        pressKey(key)
+        keyUp(Key.CtrlLeft)
+    }
+
+    private fun SemanticsNodeInteraction.pasteOverAll(value: String) {
+        setClipboard(value)
+        shortcut(Key.A)
+        shortcut(Key.V)
+    }
+
+    private fun SemanticsNodeInteraction.assertEditableText(expected: String) =
+        assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString(expected)))
+
+    private fun waitForStoredAmount(expected: String) {
+        compose.waitUntil(5000) { runBlocking { preferenceStore.values.first().sourceAmount == expected } }
+    }
+
     @Test fun customRateEditorValidatesCancelsSavesAndResetsToTheRefreshedApiRate() {
         show()
         waitForText("12,500.00")
@@ -121,7 +260,7 @@ class PocketFxUiTest {
         assertRateInput("125")
         compose.onNodeWithTag("api-rate-reference").assertTextEquals("API rate: 125 RSD")
         val input = compose.onNodeWithTag("custom-rate-input")
-        for (invalid in listOf("0", "-1", "1.2.3", "1000000000000000001")) {
+        for (invalid in listOf("0", "1000000000000000001")) {
             input.performTextReplacement(invalid)
             compose.onNodeWithText("Save rate").assertIsNotEnabled()
         }
@@ -223,6 +362,38 @@ class PocketFxUiTest {
         compose.onNodeWithTag("result-USD").assertTextEquals("187.50")
         assertEquals(checks, conversionRequests.get())
         assertResultOrder("USD", "RSD", "RUB")
+    }
+
+    @Test fun calculatorHasFourEqualWidthCellsAndAppliesAGroupedResult() {
+        show(connected = false)
+        val checks = conversionRequests.get()
+        compose.onNodeWithContentDescription("Calculator").performClick()
+        val rows = listOf(
+            listOf("CLEAR", "SIGN", "DIVIDE", "BACKSPACE"),
+            listOf("SEVEN", "EIGHT", "NINE", "MULTIPLY"),
+            listOf("FOUR", "FIVE", "SIX", "SUBTRACT"),
+            listOf("ONE", "TWO", "THREE", "ADD"),
+            listOf("TRIPLE_ZERO", "ZERO", "DECIMAL", "EQUALS"),
+        )
+        val bounds = rows.map { keys -> keys.map { key -> compose.onNodeWithTag("calc-$key").fetchSemanticsNode().boundsInRoot } }
+        val top = bounds.first()
+        assertTrue(top.zipWithNext().all { (left, right) -> left.center.x < right.center.x })
+        assertTrue(bounds.zipWithNext().all { (upper, lower) -> upper.first().center.y < lower.first().center.y })
+        assertTrue(bounds.flatten().maxOf { it.width } - bounds.flatten().minOf { it.width } <= 1f)
+        assertTrue(bounds.all { row -> row.zip(top).all { (actual, expected) -> actual.center.x == expected.center.x } })
+        compose.onNodeWithContentDescription("Triple zero").performClick()
+        compose.onNodeWithTag("calculator-expression").assertTextEquals("100,000")
+        compose.onNodeWithTag("calc-BACKSPACE").performClick()
+        compose.onNodeWithTag("calc-DIVIDE").performClick()
+        compose.onNodeWithTag("calc-TWO").performClick()
+        compose.onNodeWithTag("calc-EQUALS").performClick()
+        compose.onNodeWithTag("calculator-expression").assertTextEquals("10,000 ÷ 2")
+        compose.onNodeWithTag("calculator-result").assertTextEquals("5,000")
+        compose.onNodeWithText("Apply to converter").performScrollTo().performClick()
+        compose.onNodeWithTag("source-amount").assertEditableText("5,000")
+        compose.onNodeWithTag("result-USD").assertTextEquals("6,250.00")
+        waitForStoredAmount("5000")
+        assertEquals(checks, conversionRequests.get())
     }
 
     @Test fun closingCalculatorDiscardsTheDraftAndInvalidApplyIsDisabled() {

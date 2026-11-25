@@ -122,6 +122,7 @@
     <string name="calculator_negative">В конвертер можно подставить только неотрицательную сумму.</string>
     <string name="calculator_amount_limit">Конвертер принимает до 12 цифр в целой части.</string>
     <string name="calculator_decimal">Десятичный разделитель</string>
+    <string name="calculator_triple_zero">Три нуля</string>
     <string name="calculator_add">Сложить</string>
     <string name="calculator_subtract">Вычесть</string>
     <string name="calculator_multiply">Умножить</string>

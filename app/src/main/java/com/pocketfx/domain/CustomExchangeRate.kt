@@ -6,11 +6,13 @@ private val CustomRatePattern = Regex("[0-9]{0,19}(\\.[0-9]{0,52})?")
 private val MinCustomRate = BigDecimal("1E-18")
 private val MaxCustomRate = BigDecimal("1E18")
 
-internal fun parseCustomRate(input: String): BigDecimal? {
+internal fun normalizeCustomRate(input: String): String? {
     if (input.length > 72) return null
-    return canonicalDecimal(input)?.takeIf(CustomRatePattern::matches)?.toBigDecimalOrNull()
-        ?.takeIf { it in MinCustomRate..MaxCustomRate }
+    return canonicalDecimal(input)?.takeIf(CustomRatePattern::matches)
 }
+
+internal fun parseCustomRate(input: String): BigDecimal? =
+    normalizeCustomRate(input)?.toBigDecimalOrNull()?.takeIf { it in MinCustomRate..MaxCustomRate }
 
 internal data class CurrencyPair(val first: String, val second: String) {
     init {

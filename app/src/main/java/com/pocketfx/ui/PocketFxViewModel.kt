@@ -138,7 +138,6 @@ internal class PocketFxViewModel(
 
     fun applyCalculator(): String? {
         val amount = calculatorState.value?.amount ?: return null
-        setAmount(amount)
         closeCalculator()
         return amount
     }

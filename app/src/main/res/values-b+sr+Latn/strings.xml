@@ -120,6 +120,7 @@
     <string name="calculator_negative">U konverter se može uneti samo nenegativan iznos.</string>
     <string name="calculator_amount_limit">Konverter prihvata do 12 cifara u celom delu.</string>
     <string name="calculator_decimal">Decimalni separator</string>
+    <string name="calculator_triple_zero">Tri nule</string>
     <string name="calculator_add">Saberi</string>
     <string name="calculator_subtract">Oduzmi</string>
     <string name="calculator_multiply">Pomnoži</string>
